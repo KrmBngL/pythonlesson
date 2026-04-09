@@ -1,5 +1,5 @@
 # pg_query_advisor extension
 comment = 'PostgreSQL Query Advisor - Index, Vacuum, Autovacuum and Performance Recommendations'
-default_version = '1.0'
+default_version = '1.1'
 relocatable = false
 trusted = true
