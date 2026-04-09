@@ -9,14 +9,14 @@
 -- SCHEMA
 -- ==============================================================================
 
-CREATE SCHEMA IF NOT EXISTS pg_advisor;
+CREATE SCHEMA IF NOT EXISTS query_advisor;
 
 -- ==============================================================================
 -- 1. TABLE HEALTH
 --    Dead tuple ratio, last vacuum/analyze timestamps, health status
 -- ==============================================================================
 
-CREATE OR REPLACE FUNCTION pg_advisor.table_health(
+CREATE OR REPLACE FUNCTION query_advisor.table_health(
     p_schema         text    DEFAULT NULL,
     p_min_dead_tup   bigint  DEFAULT 0
 )
@@ -84,7 +84,7 @@ AS $$
     ORDER BY s.n_dead_tup DESC, s.n_live_tup DESC;
 $$;
 
-COMMENT ON FUNCTION pg_advisor.table_health IS
+COMMENT ON FUNCTION query_advisor.table_health IS
     'Dead tuple ratio, vacuum/analyze timestamps and health status for user tables.';
 
 -- ==============================================================================
@@ -92,7 +92,7 @@ COMMENT ON FUNCTION pg_advisor.table_health IS
 --    Scans, tuples read/fetched, size per index
 -- ==============================================================================
 
-CREATE OR REPLACE FUNCTION pg_advisor.index_usage(
+CREATE OR REPLACE FUNCTION query_advisor.index_usage(
     p_schema text DEFAULT NULL
 )
 RETURNS TABLE(
@@ -129,7 +129,7 @@ AS $$
              pg_relation_size(i.indexrelid) DESC;
 $$;
 
-COMMENT ON FUNCTION pg_advisor.index_usage IS
+COMMENT ON FUNCTION query_advisor.index_usage IS
     'Index scan counts, tuples read/fetched and usage classification.';
 
 -- ==============================================================================
@@ -137,7 +137,7 @@ COMMENT ON FUNCTION pg_advisor.index_usage IS
 --    Tables with sequential scans >> index scans
 -- ==============================================================================
 
-CREATE OR REPLACE FUNCTION pg_advisor.missing_indexes(
+CREATE OR REPLACE FUNCTION query_advisor.missing_indexes(
     p_schema        text   DEFAULT NULL,
     p_min_seq_scan  bigint DEFAULT 100,
     p_min_rows      bigint DEFAULT 1000
@@ -191,7 +191,7 @@ AS $$
     ORDER BY s.seq_scan DESC;
 $$;
 
-COMMENT ON FUNCTION pg_advisor.missing_indexes IS
+COMMENT ON FUNCTION query_advisor.missing_indexes IS
     'Tables where sequential scans dominate, suggesting missing indexes.';
 
 -- ==============================================================================
@@ -199,7 +199,7 @@ COMMENT ON FUNCTION pg_advisor.missing_indexes IS
 --    Never-used or rarely-used indexes that are candidates for removal
 -- ==============================================================================
 
-CREATE OR REPLACE FUNCTION pg_advisor.unused_indexes(
+CREATE OR REPLACE FUNCTION query_advisor.unused_indexes(
     p_schema       text    DEFAULT NULL,
     p_min_size_mb  numeric DEFAULT 0,
     p_max_scans    bigint  DEFAULT 50
@@ -254,7 +254,7 @@ AS $$
              s.idx_scan ASC;
 $$;
 
-COMMENT ON FUNCTION pg_advisor.unused_indexes IS
+COMMENT ON FUNCTION query_advisor.unused_indexes IS
     'Unused or rarely-used indexes. Includes generated DROP INDEX CONCURRENTLY commands.';
 
 -- ==============================================================================
@@ -262,7 +262,7 @@ COMMENT ON FUNCTION pg_advisor.unused_indexes IS
 --    Indexes sharing the same leading columns on the same table
 -- ==============================================================================
 
-CREATE OR REPLACE FUNCTION pg_advisor.duplicate_indexes(
+CREATE OR REPLACE FUNCTION query_advisor.duplicate_indexes(
     p_schema text DEFAULT NULL
 )
 RETURNS TABLE(
@@ -349,14 +349,14 @@ AS $$
     ORDER BY a.schema_name, a.table_name, a.index_name;
 $$;
 
-COMMENT ON FUNCTION pg_advisor.duplicate_indexes IS
+COMMENT ON FUNCTION query_advisor.duplicate_indexes IS
     'Finds index pairs that share the same leading columns on the same table.';
 
 -- ==============================================================================
 -- 6. SLOW QUERIES (requires pg_stat_statements)
 -- ==============================================================================
 
-CREATE OR REPLACE FUNCTION pg_advisor.slow_queries(
+CREATE OR REPLACE FUNCTION query_advisor.slow_queries(
     p_top_n      int    DEFAULT 20,
     p_min_calls  bigint DEFAULT 5
 )
@@ -429,14 +429,14 @@ BEGIN
 END;
 $$;
 
-COMMENT ON FUNCTION pg_advisor.slow_queries IS
+COMMENT ON FUNCTION query_advisor.slow_queries IS
     'Top slow queries from pg_stat_statements with cache hit and recommendations.';
 
 -- ==============================================================================
 -- 7. CURRENTLY RUNNING LONG QUERIES
 -- ==============================================================================
 
-CREATE OR REPLACE FUNCTION pg_advisor.long_running_queries(
+CREATE OR REPLACE FUNCTION query_advisor.long_running_queries(
     p_min_duration_s int DEFAULT 30
 )
 RETURNS TABLE(
@@ -469,7 +469,7 @@ AS $$
         left(query, 300)::text,
         CASE
             WHEN wait_event_type = 'Lock'
-                THEN 'BLOCKING: waiting on a lock — check pg_advisor.lock_waits()'
+                THEN 'BLOCKING: waiting on a lock — check query_advisor.lock_waits()'
             WHEN EXTRACT(EPOCH FROM (now() - query_start)) > 300
                 THEN 'CRITICAL: running >5 min — consider pg_cancel_backend(' || pid || ')'
             WHEN EXTRACT(EPOCH FROM (now() - query_start)) > 60
@@ -483,14 +483,14 @@ AS $$
     ORDER BY query_start ASC;
 $$;
 
-COMMENT ON FUNCTION pg_advisor.long_running_queries IS
+COMMENT ON FUNCTION query_advisor.long_running_queries IS
     'Active queries running longer than p_min_duration_s seconds.';
 
 -- ==============================================================================
 -- 8. LOCK WAITS
 -- ==============================================================================
 
-CREATE OR REPLACE FUNCTION pg_advisor.lock_waits()
+CREATE OR REPLACE FUNCTION query_advisor.lock_waits()
 RETURNS TABLE(
     waiting_pid       int,
     waiting_user      text,
@@ -534,14 +534,14 @@ AS $$
     ORDER BY w.query_start;
 $$;
 
-COMMENT ON FUNCTION pg_advisor.lock_waits IS
+COMMENT ON FUNCTION query_advisor.lock_waits IS
     'Shows current lock-wait chains: who is blocking whom.';
 
 -- ==============================================================================
 -- 9. TABLE BLOAT (dead-tuple-based estimate)
 -- ==============================================================================
 
-CREATE OR REPLACE FUNCTION pg_advisor.table_bloat(
+CREATE OR REPLACE FUNCTION query_advisor.table_bloat(
     p_schema       text    DEFAULT NULL,
     p_min_waste_mb numeric DEFAULT 1
 )
@@ -616,14 +616,14 @@ AS $$
         NULLIF((s.n_live_tup + s.n_dead_tup), 0)::numeric DESC;
 $$;
 
-COMMENT ON FUNCTION pg_advisor.table_bloat IS
+COMMENT ON FUNCTION query_advisor.table_bloat IS
     'Dead-tuple-based bloat estimate with vacuum status and recommendations.';
 
 -- ==============================================================================
 -- 10. INDEX HEALTH (invalid, oversized)
 -- ==============================================================================
 
-CREATE OR REPLACE FUNCTION pg_advisor.index_health(
+CREATE OR REPLACE FUNCTION query_advisor.index_health(
     p_schema text DEFAULT NULL
 )
 RETURNS TABLE(
@@ -669,7 +669,7 @@ AS $$
     ORDER BY ix.indisvalid ASC, pg_relation_size(s.indexrelid) DESC;
 $$;
 
-COMMENT ON FUNCTION pg_advisor.index_health IS
+COMMENT ON FUNCTION query_advisor.index_health IS
     'Identifies invalid, oversized, or unused indexes per table.';
 
 -- ==============================================================================
@@ -677,7 +677,7 @@ COMMENT ON FUNCTION pg_advisor.index_health IS
 --     Recommends per-table autovacuum tuning for large tables
 -- ==============================================================================
 
-CREATE OR REPLACE FUNCTION pg_advisor.autovacuum_settings(
+CREATE OR REPLACE FUNCTION query_advisor.autovacuum_settings(
     p_schema   text  DEFAULT NULL,
     p_min_rows bigint DEFAULT 100000
 )
@@ -778,7 +778,7 @@ AS $$
     ORDER BY t.est_rows DESC;
 $$;
 
-COMMENT ON FUNCTION pg_advisor.autovacuum_settings IS
+COMMENT ON FUNCTION query_advisor.autovacuum_settings IS
     'Recommends autovacuum_vacuum_scale_factor and threshold for large tables. '
     'Generates ready-to-run ALTER TABLE commands.';
 
@@ -786,7 +786,7 @@ COMMENT ON FUNCTION pg_advisor.autovacuum_settings IS
 -- 12. BUFFER CACHE HIT RATIO
 -- ==============================================================================
 
-CREATE OR REPLACE FUNCTION pg_advisor.cache_hit(
+CREATE OR REPLACE FUNCTION query_advisor.cache_hit(
     p_schema text DEFAULT NULL
 )
 RETURNS TABLE(
@@ -841,7 +841,7 @@ AS $$
     LIMIT 30;
 $$;
 
-COMMENT ON FUNCTION pg_advisor.cache_hit IS
+COMMENT ON FUNCTION query_advisor.cache_hit IS
     'Buffer cache hit ratios per table. Low values suggest shared_buffers is too small.';
 
 -- ==============================================================================
@@ -849,7 +849,7 @@ COMMENT ON FUNCTION pg_advisor.cache_hit IS
 --     Aggregated, prioritized view across all advisor checks
 -- ==============================================================================
 
-CREATE OR REPLACE FUNCTION pg_advisor.report(
+CREATE OR REPLACE FUNCTION query_advisor.report(
     p_schema text DEFAULT NULL
 )
 RETURNS TABLE(
@@ -876,7 +876,7 @@ BEGIN
         ('dead ' || dead_tuples || ' rows (' || dead_ratio_pct || '%), '
          || 'last autovacuum: ' || COALESCE(last_autovacuum::text, 'never'))::text,
         ('VACUUM ANALYZE ' || schema_name || '.' || table_name || ';')::text
-    FROM pg_advisor.table_health(p_schema)
+    FROM query_advisor.table_health(p_schema)
     WHERE dead_ratio_pct > 5 OR health_status <> 'OK'
     ORDER BY dead_ratio_pct DESC;
 
@@ -888,21 +888,21 @@ BEGIN
         (schema_name || '.' || index_name)::text,
         (index_size || ', ' || index_scans || ' scans')::text,
         COALESCE(drop_command, recommendation)::text
-    FROM pg_advisor.unused_indexes(p_schema)
+    FROM query_advisor.unused_indexes(p_schema)
     WHERE NOT is_primary
       AND index_scans < 10;
 
     -- Missing indexes (high seq scans)
     RETURN QUERY
     SELECT
-        priority::text,
+        mi.priority::text,
         'MISSING_INDEX'::text,
-        (schema_name || '.' || table_name)::text,
-        ('seq_scan=' || seq_scan_count || ', idx_scan=' || index_scan_count
-         || ', rows=' || live_tuples || ', size=' || table_size)::text,
-        recommendation::text
-    FROM pg_advisor.missing_indexes(p_schema)
-    WHERE index_scan_count < seq_scan_count;
+        (mi.schema_name || '.' || mi.table_name)::text,
+        ('seq_scan=' || mi.seq_scan_count || ', idx_scan=' || mi.index_scan_count
+         || ', rows=' || mi.live_tuples || ', size=' || mi.table_size)::text,
+        mi.recommendation::text
+    FROM query_advisor.missing_indexes(p_schema) mi
+    WHERE mi.index_scan_count < mi.seq_scan_count;
 
     -- Autovacuum tuning
     RETURN QUERY
@@ -912,7 +912,7 @@ BEGIN
         (schema_name || '.' || table_name)::text,
         ('rows ~' || estimated_rows || ', current scale=' || current_vac_scale)::text,
         COALESCE(alter_command, recommendation)::text
-    FROM pg_advisor.autovacuum_settings(p_schema)
+    FROM query_advisor.autovacuum_settings(p_schema)
     WHERE recommendation <> 'OK';
 
     -- Duplicate indexes
@@ -924,7 +924,7 @@ BEGIN
         ('shared leading cols: ' || shared_key
          || ', scans: ' || scans_a || ' vs ' || scans_b)::text,
         recommendation::text
-    FROM pg_advisor.duplicate_indexes(p_schema);
+    FROM query_advisor.duplicate_indexes(p_schema);
 
     -- Invalid indexes
     RETURN QUERY
@@ -934,13 +934,13 @@ BEGIN
         (schema_name || '.' || index_name)::text,
         'Index is marked invalid'::text,
         recommendation::text
-    FROM pg_advisor.index_health(p_schema)
+    FROM query_advisor.index_health(p_schema)
     WHERE NOT is_valid;
 
 END;
 $$;
 
-COMMENT ON FUNCTION pg_advisor.report IS
+COMMENT ON FUNCTION query_advisor.report IS
     'Master recommendations report. '
     'Returns prioritised findings across dead tuples, indexes, autovacuum and cache.';
 
@@ -948,38 +948,38 @@ COMMENT ON FUNCTION pg_advisor.report IS
 -- CONVENIENCE VIEWS
 -- ==============================================================================
 
-CREATE OR REPLACE VIEW pg_advisor.health_summary AS
+CREATE OR REPLACE VIEW query_advisor.health_summary AS
 SELECT 'Tables needing VACUUM (dead >10%)'     AS check_name,
        count(*)                                 AS object_count
-FROM   pg_advisor.table_health()
+FROM   query_advisor.table_health()
 WHERE  dead_ratio_pct > 10
 
 UNION ALL
 
 SELECT 'Unused indexes (0 scans)',
        count(*)
-FROM   pg_advisor.unused_indexes()
+FROM   query_advisor.unused_indexes()
 WHERE  index_scans = 0 AND NOT is_primary
 
 UNION ALL
 
 SELECT 'Tables likely missing indexes (seq >> idx)',
        count(*)
-FROM   pg_advisor.missing_indexes()
+FROM   query_advisor.missing_indexes()
 WHERE  index_scan_count < seq_scan_count
 
 UNION ALL
 
 SELECT 'Duplicate / redundant index pairs',
        count(*)
-FROM   pg_advisor.duplicate_indexes()
+FROM   query_advisor.duplicate_indexes()
 
 UNION ALL
 
 SELECT 'Invalid indexes',
        count(*)
-FROM   pg_advisor.index_health()
+FROM   query_advisor.index_health()
 WHERE  NOT is_valid;
 
-COMMENT ON VIEW pg_advisor.health_summary IS
+COMMENT ON VIEW query_advisor.health_summary IS
     'One-row-per-check summary counters for a quick database health overview.';
