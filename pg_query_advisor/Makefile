@@ -1,7 +1,9 @@
 EXTENSION    = pg_query_advisor
 DATA         = pg_query_advisor--1.0.sql \
                pg_query_advisor--1.0--1.1.sql \
-               pg_query_advisor--1.1.sql
+               pg_query_advisor--1.1.sql \
+               pg_query_advisor--1.1--1.2.sql \
+               pg_query_advisor--1.2.sql
 
 # Detect pg_config; override with: make PG_CONFIG=/usr/pgsql-18/bin/pg_config
 PG_CONFIG   ?= pg_config

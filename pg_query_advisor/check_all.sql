@@ -1,8 +1,15 @@
 -- =============================================================================
 -- pg_query_advisor — Tam Kontrol Scripti
--- Versiyon : 1.1
+-- Versiyon : 1.2
 -- Kullanim : psql -U postgres -d <veritabani> -f check_all.sql
 --            psql -U postgres -d <veritabani> -v SCHEMA=public -f check_all.sql
+-- Bolumler : 0-Genel Saglik, 1-Master Rapor, 2-Dead Tuple, 3-Bloat,
+--            4-Index Kullanim, 5-Unused Index, 6-Duplicate Index,
+--            7-Missing Index, 8-Index Saglik, 9-Autovacuum,
+--            10-Cache Hit, 11-Yavaş Sorgular, 12-Uzun Sorgular,
+--            13-Lock Zinciri, 14-Buyume Tahmini, 15-Partitioning,
+--            16-Index Oneri, 17-Idle Txn, 18-Vacuum Needs,
+--            19-Replication Slots, 20-Config Advisor, 21-Korelasyon
 -- =============================================================================
 
 \set QUIET on
@@ -430,13 +437,127 @@ ORDER BY seq_scan_count DESC;
 \pset format aligned
 
 -- =============================================================================
+-- 17. IDLE IN TRANSACTION  (v1.2)
+-- =============================================================================
+\echo ''
+\echo '------------------------------------------------------------'
+\echo '  17. IDLE IN TRANSACTION  (>30 saniye)'
+\echo '------------------------------------------------------------'
+
+SELECT
+    pid,
+    username,
+    application_name,
+    state,
+    duration_seconds,
+    idle_since,
+    lock_count,
+    left(query_text, 80)    AS query_text,
+    risk_level,
+    recommendation
+FROM query_advisor.idle_in_transaction(p_min_duration_s => 30)
+ORDER BY duration_seconds DESC;
+
+-- =============================================================================
+-- 18. VACUUM NEEDS  (v1.2)
+-- =============================================================================
+\echo ''
+\echo '------------------------------------------------------------'
+\echo '  18. VACUUM / ANALYZE IHTIYACI  (esige %70 yaklasmis)'
+\echo '------------------------------------------------------------'
+
+SELECT
+    schema_name,
+    table_name,
+    live_rows,
+    dead_rows,
+    vacuum_threshold,
+    dead_rows_pct_filled    AS "dead_%filled",
+    needs_vacuum,
+    analyze_pct_filled      AS "analyze_%filled",
+    needs_analyze,
+    recommendation
+FROM query_advisor.vacuum_needs(p_threshold_pct => 70)
+ORDER BY dead_rows_pct_filled DESC;
+
+-- =============================================================================
+-- 19. REPLICATION SLOTS  (v1.2)
+-- =============================================================================
+\echo ''
+\echo '------------------------------------------------------------'
+\echo '  19. REPLICATION SLOT DURUMU'
+\echo '------------------------------------------------------------'
+
+SELECT
+    slot_name,
+    slot_type,
+    plugin,
+    database_name,
+    active,
+    wal_retained_mb,
+    replication_lag,
+    risk_level,
+    recommendation
+FROM query_advisor.replication_slots()
+ORDER BY wal_retained_mb DESC NULLS LAST;
+
+-- =============================================================================
+-- 20. KONFIGÜRASYON DANISMANI  (v1.2)
+-- =============================================================================
+\echo ''
+\echo '------------------------------------------------------------'
+\echo '  20. KONFIGURASYON DANISMANI  (postgresql.conf)'
+\echo '------------------------------------------------------------'
+
+SELECT
+    parameter,
+    current_value,
+    recommended_value,
+    unit,
+    risk_level,
+    explanation
+FROM query_advisor.config_advisor()
+ORDER BY
+    CASE risk_level
+        WHEN 'CRITICAL' THEN 0
+        WHEN 'WARNING'  THEN 1
+        WHEN 'NOTICE'   THEN 2
+        ELSE                 3
+    END;
+
+-- =============================================================================
+-- 21. KORELASYON KONTROLU  (v1.2)
+-- =============================================================================
+\echo ''
+\echo '------------------------------------------------------------'
+\echo '  21. INDEX KORELASYON KONTROLU  (dusuk fiziksel siralama)'
+\echo '------------------------------------------------------------'
+
+SELECT
+    schema_name,
+    table_name,
+    column_name,
+    data_type,
+    correlation,
+    has_index,
+    index_name,
+    live_rows,
+    table_size,
+    finding,
+    recommendation
+FROM query_advisor.correlation_check(p_max_correlation => 0.3)
+ORDER BY correlation ASC;
+
+-- =============================================================================
 -- RAPOR SONU
 -- =============================================================================
 \echo ''
 \echo '============================================================'
-\echo '  Rapor tamamlandi.'
-\echo '  Oncelik sirasi: 1-CRITICAL > 2-WARNING > 3-NOTICE'
+\echo '  Rapor tamamlandi.   (pg_query_advisor v1.2)'
+\echo '  Oncelik sirasi  : 1-CRITICAL > 2-WARNING > 3-NOTICE'
 \echo '  Index kaldirmadan once: SELECT * FROM query_advisor.duplicate_indexes()'
-\echo '  Index eklemeden once : EXPLAIN ANALYZE ile plan dogrulayin'
+\echo '  Index eklemeden once  : EXPLAIN ANALYZE ile plan dogrulayin'
+\echo '  Korelasyon dusukse    : BRIN index veya CLUSTER deneyin'
+\echo '  Idle transaction varsa: pg_terminate_backend(pid) ile sonlandirin'
 \echo '============================================================'
 \echo ''
