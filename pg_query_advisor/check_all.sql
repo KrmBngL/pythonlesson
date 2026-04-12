@@ -1,6 +1,6 @@
 -- =============================================================================
 -- pg_query_advisor — Tam Kontrol Scripti
--- Versiyon : 1.3
+-- Versiyon : 1.4
 -- Kullanim : psql -U postgres -d <veritabani> -f check_all.sql
 --            psql -U postgres -d <veritabani> -v SCHEMA=public -f check_all.sql
 -- Bolumler : 0-Genel Saglik, 1-Master Rapor, 2-Dead Tuple, 3-Bloat,
@@ -11,7 +11,8 @@
 --            16-Index Oneri, 17-Idle Txn, 18-Vacuum Needs,
 --            19-Replication Slots, 20-Config Advisor, 21-Korelasyon,
 --            22-Sequence Saglik, 23-FK Index Eksik, 24-Baglanti,
---            25-Temp File, 26-Vacuum Progress
+--            25-Temp File, 26-Vacuum Progress, 27-Tablespace,
+--            28-TOAST Analizi, 29-Deadlock, 30-Buffer Cache
 -- =============================================================================
 
 \set QUIET on
@@ -660,11 +661,97 @@ FROM query_advisor.vacuum_progress()
 ORDER BY duration_seconds DESC;
 
 -- =============================================================================
+-- 27. TABLESPACE USAGE  (v1.4)
+-- =============================================================================
+\echo ''
+\echo '------------------------------------------------------------'
+\echo '  27. TABLESPACE KULLANIMI'
+\echo '------------------------------------------------------------'
+
+SELECT
+    tablespace_name,
+    location,
+    total_size,
+    object_count,
+    table_count,
+    index_count,
+    risk_level,
+    recommendation
+FROM query_advisor.tablespace_usage()
+ORDER BY total_size_bytes DESC;
+
+-- =============================================================================
+-- 28. TOAST ANALYSIS  (v1.4)
+-- =============================================================================
+\echo ''
+\echo '------------------------------------------------------------'
+\echo '  28. TOAST ANALIZI  (TEXT/JSONB/BYTEA sisme)'
+\echo '------------------------------------------------------------'
+
+SELECT
+    schema_name,
+    table_name,
+    heap_size,
+    toast_size,
+    total_size,
+    toast_pct       AS "toast_%",
+    live_tuples,
+    has_wide_cols,
+    risk_level,
+    recommendation
+FROM query_advisor.toast_analysis(p_min_toast_mb => 1)
+ORDER BY toast_pct DESC;
+
+-- =============================================================================
+-- 29. DEADLOCK STATS  (v1.4)
+-- =============================================================================
+\echo ''
+\echo '------------------------------------------------------------'
+\echo '  29. DEADLOCK ISTATISTIKLERI'
+\echo '------------------------------------------------------------'
+
+SELECT
+    database_name,
+    deadlocks_total,
+    conflicts_total,
+    blk_read_time_ms,
+    blk_write_time_ms,
+    stats_reset,
+    current_lock_waits,
+    risk_level,
+    recommendation
+FROM query_advisor.deadlock_stats()
+ORDER BY deadlocks_total DESC;
+
+-- =============================================================================
+-- 30. BUFFER CACHE TOP  (v1.4)
+-- =============================================================================
+\echo ''
+\echo '------------------------------------------------------------'
+\echo '  30. BUFFER CACHE DOLULUGU  (en cok yer kaplayan nesneler)'
+\echo '------------------------------------------------------------'
+
+SELECT
+    schema_name,
+    object_name,
+    object_type,
+    buffers_used,
+    buffer_size,
+    pct_of_cache        AS "cache_%",
+    dirty_buffers,
+    object_size,
+    cache_coverage_pct  AS "kapsama_%",
+    source,
+    recommendation
+FROM query_advisor.buffercache_top(p_top_n => 20)
+ORDER BY buffers_used DESC NULLS LAST;
+
+-- =============================================================================
 -- RAPOR SONU
 -- =============================================================================
 \echo ''
 \echo '============================================================'
-\echo '  Rapor tamamlandi.   (pg_query_advisor v1.3)'
+\echo '  Rapor tamamlandi.   (pg_query_advisor v1.4)'
 \echo '  Oncelik sirasi        : 1-CRITICAL > 2-WARNING > 3-NOTICE'
 \echo '  Index kaldirmadan once: SELECT * FROM query_advisor.duplicate_indexes()'
 \echo '  Index eklemeden once  : EXPLAIN ANALYZE ile plan dogrulayin'
@@ -672,5 +759,7 @@ ORDER BY duration_seconds DESC;
 \echo '  Idle transaction varsa: pg_terminate_backend(pid) ile sonlandirin'
 \echo '  FK index eksikse      : create_index_sql kolonundaki DDL''i calistirin'
 \echo '  Sequence doluysa      : ALTER SEQUENCE ... AS bigint ile genisletin'
+\echo '  TOAST sismesi varsa   : VACUUM FULL veya pg_repack kullanin'
+\echo '  Buffer cache analizi  : CREATE EXTENSION pg_buffercache ile gercek zamanli'
 \echo '============================================================'
 \echo ''
