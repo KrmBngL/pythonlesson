@@ -1,6 +1,6 @@
 -- =============================================================================
 -- pg_query_advisor — Tam Kontrol Scripti
--- Versiyon : 1.2
+-- Versiyon : 1.3
 -- Kullanim : psql -U postgres -d <veritabani> -f check_all.sql
 --            psql -U postgres -d <veritabani> -v SCHEMA=public -f check_all.sql
 -- Bolumler : 0-Genel Saglik, 1-Master Rapor, 2-Dead Tuple, 3-Bloat,
@@ -9,7 +9,9 @@
 --            10-Cache Hit, 11-Yavaş Sorgular, 12-Uzun Sorgular,
 --            13-Lock Zinciri, 14-Buyume Tahmini, 15-Partitioning,
 --            16-Index Oneri, 17-Idle Txn, 18-Vacuum Needs,
---            19-Replication Slots, 20-Config Advisor, 21-Korelasyon
+--            19-Replication Slots, 20-Config Advisor, 21-Korelasyon,
+--            22-Sequence Saglik, 23-FK Index Eksik, 24-Baglanti,
+--            25-Temp File, 26-Vacuum Progress
 -- =============================================================================
 
 \set QUIET on
@@ -549,15 +551,126 @@ FROM query_advisor.correlation_check(p_max_correlation => 0.3)
 ORDER BY correlation ASC;
 
 -- =============================================================================
+-- 22. SEQUENCE HEALTH  (v1.3)
+-- =============================================================================
+\echo ''
+\echo '------------------------------------------------------------'
+\echo '  22. SEQUENCE SAGLIGI  (tasman esigine yaklasan)'
+\echo '------------------------------------------------------------'
+
+SELECT
+    schema_name,
+    sequence_name,
+    data_type,
+    current_value,
+    max_value,
+    used_pct        AS "kullanim_%",
+    remaining_values,
+    risk_level,
+    recommendation
+FROM query_advisor.sequence_health(p_pct_warn => 75)
+ORDER BY used_pct DESC;
+
+-- =============================================================================
+-- 23. FK WITHOUT INDEX  (v1.3)
+-- =============================================================================
+\echo ''
+\echo '------------------------------------------------------------'
+\echo '  23. FK INDEX EKSIKLIGI  (parent silerken full scan)'
+\echo '------------------------------------------------------------'
+
+SELECT
+    schema_name,
+    table_name,
+    constraint_name,
+    fk_columns,
+    referenced_table,
+    table_size,
+    seq_scans,
+    create_index_sql
+FROM query_advisor.fk_without_index()
+ORDER BY seq_scans DESC;
+
+-- =============================================================================
+-- 24. CONNECTION STATS  (v1.3)
+-- =============================================================================
+\echo ''
+\echo '------------------------------------------------------------'
+\echo '  24. BAGLANTI ISTATISTIKLERI'
+\echo '------------------------------------------------------------'
+
+SELECT
+    category,
+    metric,
+    value,
+    pct_of_max      AS "max_%",
+    risk_level,
+    detail
+FROM query_advisor.connection_stats()
+ORDER BY
+    CASE risk_level
+        WHEN 'CRITICAL' THEN 0
+        WHEN 'WARNING'  THEN 1
+        WHEN 'NOTICE'   THEN 2
+        ELSE                 3
+    END,
+    category, metric;
+
+-- =============================================================================
+-- 25. TEMP FILE STATS  (v1.3)
+-- =============================================================================
+\echo ''
+\echo '------------------------------------------------------------'
+\echo '  25. TEMP FILE KULLANIMI  (work_mem spill)'
+\echo '------------------------------------------------------------'
+
+SELECT
+    database_name,
+    total_temp_files,
+    total_temp_size,
+    work_mem_current,
+    sort_mem_multiplier     AS "kac_work_mem",
+    risk_level,
+    recommendation
+FROM query_advisor.temp_file_stats(p_top_n => 10)
+ORDER BY total_temp_files DESC;
+
+-- =============================================================================
+-- 26. VACUUM PROGRESS  (v1.3)
+-- =============================================================================
+\echo ''
+\echo '------------------------------------------------------------'
+\echo '  26. AKTIF VACUUM / AUTOVACUUM ILERLEME DURUMU'
+\echo '------------------------------------------------------------'
+
+SELECT
+    pid,
+    operation,
+    schema_name,
+    table_name,
+    phase,
+    heap_blks_total,
+    heap_blks_vacuumed,
+    progress_pct    AS "ilerleme_%",
+    dead_tuples_found,
+    duration_seconds,
+    is_autovacuum,
+    recommendation
+FROM query_advisor.vacuum_progress()
+ORDER BY duration_seconds DESC;
+
+-- =============================================================================
 -- RAPOR SONU
 -- =============================================================================
 \echo ''
 \echo '============================================================'
-\echo '  Rapor tamamlandi.   (pg_query_advisor v1.2)'
-\echo '  Oncelik sirasi  : 1-CRITICAL > 2-WARNING > 3-NOTICE'
+\echo '  Rapor tamamlandi.   (pg_query_advisor v1.3)'
+\echo '  Oncelik sirasi        : 1-CRITICAL > 2-WARNING > 3-NOTICE'
 \echo '  Index kaldirmadan once: SELECT * FROM query_advisor.duplicate_indexes()'
 \echo '  Index eklemeden once  : EXPLAIN ANALYZE ile plan dogrulayin'
 \echo '  Korelasyon dusukse    : BRIN index veya CLUSTER deneyin'
 \echo '  Idle transaction varsa: pg_terminate_backend(pid) ile sonlandirin'
+\echo '  FK index eksikse      : create_index_sql kolonundaki DDL''i calistirin'
+\echo '  Sequence doluysa      : ALTER SEQUENCE ... AS bigint ile genisletin'
 \echo '============================================================'
 \echo ''

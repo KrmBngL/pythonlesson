@@ -13,6 +13,7 @@ Tüm fonksiyonlar **`query_advisor`** şeması altındadır.
 | **1.0** | 13 temel fonksiyon + health_summary view |
 | **1.1** | EXPLAIN analizi, büyüme tahmini, partition adayları, index öneri motoru |
 | **1.2** | Idle transaction, vacuum ihtiyaç analizi, replication slot izleme, config danışmanı, korelasyon kontrolü |
+| **1.3** | Sequence taşma tespiti, FK index eksiklikleri, bağlantı istatistikleri, temp file analizi, aktif vacuum izleme |
 
 ---
 
@@ -55,6 +56,16 @@ Tüm fonksiyonlar **`query_advisor`** şeması altındadır.
 | `query_advisor.replication_slots()` | Takılı/geride kalmış slot'lar — WAL disk baskısı riski |
 | `query_advisor.config_advisor()` | shared_buffers, work_mem, fsync vb. için RAM bazlı öneriler |
 | `query_advisor.correlation_check()` | Düşük korelasyonlu sütunlarda B-tree verimsizliği; BRIN/CLUSTER önerisi |
+
+### v1.3 — Güvenlik Ağı ve Kaynak Analizi
+
+| Fonksiyon | Açıklama |
+|-----------|----------|
+| `query_advisor.sequence_health()` | Integer taşmasına yaklaşan sequence'lar — INSERT hatası riski |
+| `query_advisor.fk_without_index()` | Parent silme/güncellemede full scan yapan FK'ler — hazır `CREATE INDEX` DDL |
+| `query_advisor.connection_stats()` | Bağlantı dağılımı: aktif/idle/idle-in-txn, uygulama bazlı, max_connections doluluk |
+| `query_advisor.temp_file_stats()` | work_mem yetersizliğinden disk'e dökülen sort/hash (spill) tespiti |
+| `query_advisor.vacuum_progress()` | Aktif VACUUM/AUTOVACUUM ilerleme takibi — `pg_stat_progress_vacuum` |
 
 ---
 
@@ -132,6 +143,8 @@ cp pg_query_advisor--1.0--1.1.sql    $EXT_DIR/
 cp pg_query_advisor--1.1.sql         $EXT_DIR/
 cp pg_query_advisor--1.1--1.2.sql    $EXT_DIR/
 cp pg_query_advisor--1.2.sql         $EXT_DIR/
+cp pg_query_advisor--1.2--1.3.sql    $EXT_DIR/
+cp pg_query_advisor--1.3.sql         $EXT_DIR/
 ```
 
 ### Adım 7 — Extension'ı Oluştur
@@ -141,10 +154,10 @@ psql -U postgres -d mydb -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
 psql -U postgres -d mydb -c "CREATE EXTENSION pg_query_advisor;"
 ```
 
-Zaten 1.0 veya 1.1 yüklüyse güncelleme:
+Önceki sürümden güncelleme:
 
 ```bash
-psql -U postgres -d mydb -c "ALTER EXTENSION pg_query_advisor UPDATE TO '1.2';"
+psql -U postgres -d mydb -c "ALTER EXTENSION pg_query_advisor UPDATE TO '1.3';"
 ```
 
 Kurulumu doğrula:
@@ -195,6 +208,11 @@ psql -U postgres -d mydb -v SCHEMA=public -f check_all.sql
 | 19 | replication_slots() |
 | 20 | config_advisor() |
 | 21 | correlation_check() |
+| 22 | sequence_health() |
+| 23 | fk_without_index() |
+| 24 | connection_stats() |
+| 25 | temp_file_stats() |
+| 26 | vacuum_progress() |
 
 ---
 
@@ -544,18 +562,107 @@ SELECT * FROM query_advisor.correlation_check(p_schema => 'public', p_max_correl
 
 ---
 
+### sequence_health() — v1.3
+
+```sql
+SELECT * FROM query_advisor.sequence_health();
+SELECT * FROM query_advisor.sequence_health(p_schema => 'public', p_pct_warn => 75, p_pct_critical => 90);
+```
+
+**Parametreler:** p_schema (default NULL), p_pct_warn (default 75), p_pct_critical (default 90)
+
+**Döndürdüğü sütunlar:** schema_name, sequence_name, data_type, current_value, min_value, max_value, increment_by, is_cycled, used_pct, remaining_values, risk_level, recommendation
+
+`recommendation` sütunu gerektiğinde `ALTER SEQUENCE ... AS bigint` ve `ALTER TABLE ... ALTER COLUMN ... TYPE bigint` komutlarını içerir.
+
+**Risk seviyeleri:**
+- `CRITICAL`: Kullanım > %90
+- `WARNING`: Kullanım > %75
+- `OK`: Normal veya cycle aktif
+
+---
+
+### fk_without_index() — v1.3
+
+```sql
+SELECT * FROM query_advisor.fk_without_index();
+SELECT * FROM query_advisor.fk_without_index(p_schema => 'public');
+```
+
+**Parametreler:** p_schema (default NULL)
+
+**Döndürdüğü sütunlar:** schema_name, table_name, constraint_name, fk_columns, referenced_table, referenced_columns, table_size, seq_scans, create_index_sql, recommendation
+
+`create_index_sql` sütunu çalıştırmaya hazır `CREATE INDEX CONCURRENTLY` komutu içerir. FK'nın leading kolonu için index yoksa sonuç döner.
+
+---
+
+### connection_stats() — v1.3
+
+```sql
+SELECT * FROM query_advisor.connection_stats();
+SELECT category, metric, value, pct_of_max, risk_level
+FROM query_advisor.connection_stats()
+WHERE risk_level <> 'OK';
+```
+
+**Döndürdüğü sütunlar:** category, metric, value, pct_of_max, risk_level, detail
+
+**Kategoriler:**
+- `GENEL`: Toplam, aktif, idle, idle-in-transaction, lock bekleyen sayılar
+- `UYGULAMA`: Bağlantı sayısına göre top 5 uygulama
+- `KULLANICI`: Bağlantı sayısına göre top 5 kullanıcı
+
+max_connections'ın %90'ı aşıldığında CRITICAL, %70'i aşıldığında WARNING verir.
+
+---
+
+### temp_file_stats() — v1.3
+
+```sql
+SELECT * FROM query_advisor.temp_file_stats();
+SELECT * FROM query_advisor.temp_file_stats(p_top_n => 5);
+```
+
+**Parametreler:** p_top_n (default 10)
+
+**Döndürdüğü sütunlar:** category, database_name, total_temp_files, total_temp_size, work_mem_current, sort_mem_multiplier, risk_level, recommendation
+
+`sort_mem_multiplier`: Ne kadar work_mem'e eşdeğer temp dosya üretildiğini gösterir. Yüksekse `work_mem` artırılmalı veya sorgular optimize edilmeli.
+
+**Risk seviyeleri:**
+- `CRITICAL`: > 10.000 temp dosya
+- `WARNING`: > 1.000 temp dosya
+- `NOTICE`: > 0 temp dosya
+
+---
+
+### vacuum_progress() — v1.3
+
+```sql
+SELECT * FROM query_advisor.vacuum_progress();
+```
+
+**Döndürdüğü sütunlar:** pid, operation, schema_name, table_name, phase, heap_blks_total, heap_blks_scanned, heap_blks_vacuumed, progress_pct, index_vacuum_count, dead_tuples_found, dead_tuples_removed, duration_seconds, is_autovacuum, recommendation
+
+`pg_stat_progress_vacuum` + `pg_stat_activity` birleştirerek aktif VACUUM/AUTOVACUUM süreçlerini gösterir. 1 saatten uzun sürüp ilerleme %10'dan azsa `UYARI` verir (olası blokaj).
+
+---
+
 ## Yapı Özeti
 
 ```
 pg_query_advisor/
-├── pg_query_advisor.control         # Extension metadata (default_version = 1.2)
+├── pg_query_advisor.control         # Extension metadata (default_version = 1.3)
 ├── Makefile                         # PGXS build
 ├── pg_query_advisor--1.0.sql        # v1.0 tam kurulum (13 fonksiyon)
 ├── pg_query_advisor--1.0--1.1.sql   # v1.0 → v1.1 upgrade (4 fonksiyon eklendi)
 ├── pg_query_advisor--1.1.sql        # v1.1 tam kurulum (17 fonksiyon)
 ├── pg_query_advisor--1.1--1.2.sql   # v1.1 → v1.2 upgrade (5 fonksiyon eklendi)
 ├── pg_query_advisor--1.2.sql        # v1.2 tam kurulum (22 fonksiyon)
-├── check_all.sql                    # Tüm 21 kontrolü çalıştıran birleşik script
+├── pg_query_advisor--1.2--1.3.sql   # v1.2 → v1.3 upgrade (5 fonksiyon eklendi)
+├── pg_query_advisor--1.3.sql        # v1.3 tam kurulum (27 fonksiyon)
+├── check_all.sql                    # Tüm 26 kontrolü çalıştıran birleşik script
 ├── install.sh                       # Otomatik kurulum scripti
 └── rpm/
     └── pg_query_advisor.spec        # RHEL 8/9 RPM spec
@@ -588,6 +695,18 @@ psql -U postgres -d mydb -c "SELECT parameter, current_value, recommended_value,
 
 # Idle transaction tehlikesi
 psql -U postgres -d mydb -c "SELECT pid, username, duration_seconds, risk_level, recommendation FROM query_advisor.idle_in_transaction();"
+
+# Sequence taşma riski
+psql -U postgres -d mydb -c "SELECT schema_name, sequence_name, data_type, used_pct, risk_level, recommendation FROM query_advisor.sequence_health() WHERE risk_level <> 'OK';"
+
+# FK index eksikleri — hazır DDL ile
+psql -U postgres -d mydb -c "SELECT table_name, fk_columns, seq_scans, create_index_sql FROM query_advisor.fk_without_index();"
+
+# Bağlantı durumu
+psql -U postgres -d mydb -c "SELECT category, metric, value, pct_of_max, risk_level FROM query_advisor.connection_stats();"
+
+# Aktif vacuum izleme
+psql -U postgres -d mydb -c "SELECT table_name, phase, progress_pct, duration_seconds, is_autovacuum FROM query_advisor.vacuum_progress();"
 ```
 
 ---
