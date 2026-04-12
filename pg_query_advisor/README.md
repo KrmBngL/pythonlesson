@@ -15,6 +15,7 @@ Tüm fonksiyonlar **`query_advisor`** şeması altındadır.
 | **1.2** | Idle transaction, vacuum ihtiyaç analizi, replication slot izleme, config danışmanı, korelasyon kontrolü |
 | **1.3** | Sequence taşma tespiti, FK index eksiklikleri, bağlantı istatistikleri, temp file analizi, aktif vacuum izleme |
 | **1.4** | Tablespace kullanımı, TOAST şişme analizi, deadlock istatistikleri, buffer cache doluluk analizi |
+| **1.5** | Wait event dağılımı, index bloat tahmini, yetki denetimi, tablo access method analizi |
 
 ---
 
@@ -57,6 +58,15 @@ Tüm fonksiyonlar **`query_advisor`** şeması altındadır.
 | `query_advisor.replication_slots()` | Takılı/geride kalmış slot'lar — WAL disk baskısı riski |
 | `query_advisor.config_advisor()` | shared_buffers, work_mem, fsync vb. için RAM bazlı öneriler |
 | `query_advisor.correlation_check()` | Düşük korelasyonlu sütunlarda B-tree verimsizliği; BRIN/CLUSTER önerisi |
+
+### v1.5 — Performans Tanı ve Güvenlik
+
+| Fonksiyon | Açıklama |
+|-----------|----------|
+| `query_advisor.wait_event_summary()` | Lock/LWLock/IO/CPU bekleme dağılımı — sistemin nerede darboğazda olduğunu gösterir |
+| `query_advisor.index_bloat_estimate()` | pgstattuple olmadan index bloat tahmini — `REINDEX CONCURRENTLY` önerisi |
+| `query_advisor.table_privileges_audit()` | PUBLIC erişim, superuser, CREATEROLE, şifresiz rol tespiti |
+| `query_advisor.table_access_methods()` | heap/columnar vb. access method + düşük fillfactor tespiti |
 
 ### v1.4 — Depolama ve Bellek Analizi
 
@@ -167,7 +177,7 @@ psql -U postgres -d mydb -c "CREATE EXTENSION pg_query_advisor;"
 Önceki sürümden güncelleme:
 
 ```bash
-psql -U postgres -d mydb -c "ALTER EXTENSION pg_query_advisor UPDATE TO '1.4';"
+psql -U postgres -d mydb -c "ALTER EXTENSION pg_query_advisor UPDATE TO '1.5';"
 ```
 
 Kurulumu doğrula:
@@ -227,6 +237,10 @@ psql -U postgres -d mydb -v SCHEMA=public -f check_all.sql
 | 28 | toast_analysis() |
 | 29 | deadlock_stats() |
 | 30 | buffercache_top() |
+| 31 | wait_event_summary() |
+| 32 | index_bloat_estimate() |
+| 33 | table_privileges_audit() |
+| 34 | table_access_methods() |
 
 ---
 
@@ -667,7 +681,7 @@ SELECT * FROM query_advisor.vacuum_progress();
 
 ```
 pg_query_advisor/
-├── pg_query_advisor.control         # Extension metadata (default_version = 1.4)
+├── pg_query_advisor.control         # Extension metadata (default_version = 1.5)
 ├── Makefile                         # PGXS build
 ├── pg_query_advisor--1.0.sql        # v1.0 tam kurulum (13 fonksiyon)
 ├── pg_query_advisor--1.0--1.1.sql   # v1.0 → v1.1 upgrade (4 fonksiyon eklendi)
@@ -678,7 +692,9 @@ pg_query_advisor/
 ├── pg_query_advisor--1.3.sql        # v1.3 tam kurulum (27 fonksiyon)
 ├── pg_query_advisor--1.3--1.4.sql   # v1.3 → v1.4 upgrade (4 fonksiyon eklendi)
 ├── pg_query_advisor--1.4.sql        # v1.4 tam kurulum (31 fonksiyon)
-├── check_all.sql                    # Tüm 30 kontrolü çalıştıran birleşik script
+├── pg_query_advisor--1.4--1.5.sql   # v1.4 → v1.5 upgrade (4 fonksiyon eklendi)
+├── pg_query_advisor--1.5.sql        # v1.5 tam kurulum (35 fonksiyon)
+├── check_all.sql                    # Tüm 34 kontrolü çalıştıran birleşik script
 ├── install.sh                       # Otomatik kurulum scripti
 └── rpm/
     └── pg_query_advisor.spec        # RHEL 8/9 RPM spec

@@ -1,6 +1,6 @@
 -- =============================================================================
 -- pg_query_advisor — Tam Kontrol Scripti
--- Versiyon : 1.4
+-- Versiyon : 1.5
 -- Kullanim : psql -U postgres -d <veritabani> -f check_all.sql
 --            psql -U postgres -d <veritabani> -v SCHEMA=public -f check_all.sql
 -- Bolumler : 0-Genel Saglik, 1-Master Rapor, 2-Dead Tuple, 3-Bloat,
@@ -12,7 +12,9 @@
 --            19-Replication Slots, 20-Config Advisor, 21-Korelasyon,
 --            22-Sequence Saglik, 23-FK Index Eksik, 24-Baglanti,
 --            25-Temp File, 26-Vacuum Progress, 27-Tablespace,
---            28-TOAST Analizi, 29-Deadlock, 30-Buffer Cache
+--            28-TOAST Analizi, 29-Deadlock, 30-Buffer Cache,
+--            31-Wait Event, 32-Index Bloat, 33-Yetki Denetimi,
+--            34-Access Methods
 -- =============================================================================
 
 \set QUIET on
@@ -747,11 +749,105 @@ FROM query_advisor.buffercache_top(p_top_n => 20)
 ORDER BY buffers_used DESC NULLS LAST;
 
 -- =============================================================================
+-- =============================================================================
+-- 31. WAIT EVENT SUMMARY  (v1.5)
+-- =============================================================================
+\echo ''
+\echo '------------------------------------------------------------'
+\echo '  31. WAIT EVENT OZETI  (sistem nerede bekliyor?)'
+\echo '------------------------------------------------------------'
+
+SELECT
+    wait_event_type,
+    wait_event,
+    session_count,
+    pct_of_total    AS "toplam_%",
+    risk_level,
+    explanation,
+    left(sample_query, 80)  AS sample_query
+FROM query_advisor.wait_event_summary()
+ORDER BY session_count DESC;
+
+-- =============================================================================
+-- 32. INDEX BLOAT ESTIMATE  (v1.5)
+-- =============================================================================
+\echo ''
+\echo '------------------------------------------------------------'
+\echo '  32. INDEX BLOAT TAHMINI  (pgstattuple olmadan)'
+\echo '------------------------------------------------------------'
+
+SELECT
+    schema_name,
+    table_name,
+    index_name,
+    index_type,
+    index_size,
+    fill_factor,
+    table_dead_pct      AS "dead_%",
+    bloat_ratio_pct     AS "bloat_%",
+    estimated_waste,
+    days_since_vacuum,
+    risk_level,
+    recommendation
+FROM query_advisor.index_bloat_estimate(p_min_bloat_pct => 20, p_min_size_mb => 1)
+ORDER BY bloat_ratio_pct DESC;
+
+-- =============================================================================
+-- 33. TABLE PRIVILEGES AUDIT  (v1.5)
+-- =============================================================================
+\echo ''
+\echo '------------------------------------------------------------'
+\echo '  33. YETKI DENETIMI  (superuser, PUBLIC erisim, sifresiz)'
+\echo '------------------------------------------------------------'
+
+SELECT
+    audit_type,
+    role_name,
+    object_schema,
+    object_name,
+    privileges,
+    risk_level,
+    recommendation
+FROM query_advisor.table_privileges_audit()
+ORDER BY
+    CASE risk_level
+        WHEN 'CRITICAL' THEN 0
+        WHEN 'WARNING'  THEN 1
+        WHEN 'NOTICE'   THEN 2
+        ELSE                 3
+    END,
+    audit_type, role_name;
+
+-- =============================================================================
+-- 34. TABLE ACCESS METHODS  (v1.5)
+-- =============================================================================
+\echo ''
+\echo '------------------------------------------------------------'
+\echo '  34. TABLO ACCESS METHOD  (heap, columnar vb.)'
+\echo '------------------------------------------------------------'
+
+SELECT
+    schema_name,
+    table_name,
+    access_method,
+    table_size,
+    live_tuples,
+    is_partitioned,
+    is_standard,
+    fillfactor,
+    risk_level,
+    recommendation
+FROM query_advisor.table_access_methods()
+WHERE risk_level <> 'OK'
+   OR access_method <> 'heap'
+ORDER BY is_standard ASC, table_size DESC;
+
+-- =============================================================================
 -- RAPOR SONU
 -- =============================================================================
 \echo ''
 \echo '============================================================'
-\echo '  Rapor tamamlandi.   (pg_query_advisor v1.4)'
+\echo '  Rapor tamamlandi.   (pg_query_advisor v1.5)'
 \echo '  Oncelik sirasi        : 1-CRITICAL > 2-WARNING > 3-NOTICE'
 \echo '  Index kaldirmadan once: SELECT * FROM query_advisor.duplicate_indexes()'
 \echo '  Index eklemeden once  : EXPLAIN ANALYZE ile plan dogrulayin'
@@ -761,5 +857,7 @@ ORDER BY buffers_used DESC NULLS LAST;
 \echo '  Sequence doluysa      : ALTER SEQUENCE ... AS bigint ile genisletin'
 \echo '  TOAST sismesi varsa   : VACUUM FULL veya pg_repack kullanin'
 \echo '  Buffer cache analizi  : CREATE EXTENSION pg_buffercache ile gercek zamanli'
+\echo '  Index bloat varsa     : REINDEX CONCURRENTLY ile canli sistemde yenile'
+\echo '  PUBLIC yetki varsa    : REVOKE ile en az yetki prensibini uygula'
 \echo '============================================================'
 \echo ''

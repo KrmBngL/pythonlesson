@@ -7,7 +7,9 @@ DATA         = pg_query_advisor--1.0.sql \
                pg_query_advisor--1.2--1.3.sql \
                pg_query_advisor--1.3.sql \
                pg_query_advisor--1.3--1.4.sql \
-               pg_query_advisor--1.4.sql
+               pg_query_advisor--1.4.sql \
+               pg_query_advisor--1.4--1.5.sql \
+               pg_query_advisor--1.5.sql
 
 # Detect pg_config; override with: make PG_CONFIG=/usr/pgsql-18/bin/pg_config
 PG_CONFIG   ?= pg_config
