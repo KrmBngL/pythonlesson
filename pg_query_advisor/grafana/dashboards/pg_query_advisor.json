@@ -1,0 +1,255 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_POSTGRESQL",
+      "label": "PostgreSQL",
+      "description": "pg_query_advisor veritabani",
+      "type": "datasource",
+      "pluginId": "postgres",
+      "pluginName": "PostgreSQL"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana",    "id": "grafana",  "name": "Grafana",    "version": "10.0.0" },
+    { "type": "datasource", "id": "postgres", "name": "PostgreSQL", "version": "1.0.0"  },
+    { "type": "panel",      "id": "table",    "name": "Table",      "version": "" },
+    { "type": "panel",      "id": "stat",     "name": "Stat",       "version": "" },
+    { "type": "panel",      "id": "gauge",    "name": "Gauge",      "version": "" }
+  ],
+  "description": "pg_query_advisor v1.5 — PostgreSQL Database Health Dashboard",
+  "editable": true,
+  "graphTooltip": 0,
+  "id": null,
+  "refresh": "5m",
+  "schemaVersion": 38,
+  "tags": ["postgresql", "dba", "pg_query_advisor"],
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "browser",
+  "title": "pg_query_advisor — PostgreSQL Health",
+  "uid": "pg-query-advisor-v15",
+  "version": 1,
+  "panels": [
+
+    { "type": "row", "title": "Genel Saglik Ozeti", "collapsed": false, "gridPos": {"h":1,"w":24,"x":0,"y":0}, "id": 1 },
+
+    {
+      "id": 2, "type": "stat", "title": "CRITICAL Bulgu",
+      "gridPos": {"h":4,"w":4,"x":0,"y":1},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "options": { "colorMode": "background", "reduceOptions": {"calcs":["lastNotNull"]} },
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{"color":"green","value":0},{"color":"red","value":1}] }, "color": {"mode":"thresholds"} } },
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT COUNT(*)::int AS value FROM query_advisor.report() WHERE priority = '1-CRITICAL'", "refId":"A" }]
+    },
+
+    {
+      "id": 3, "type": "stat", "title": "WARNING Bulgu",
+      "gridPos": {"h":4,"w":4,"x":4,"y":1},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "options": { "colorMode": "background", "reduceOptions": {"calcs":["lastNotNull"]} },
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{"color":"green","value":0},{"color":"orange","value":1}] }, "color": {"mode":"thresholds"} } },
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT COUNT(*)::int AS value FROM query_advisor.report() WHERE priority = '2-WARNING'", "refId":"A" }]
+    },
+
+    {
+      "id": 4, "type": "stat", "title": "Aktif Baglanti",
+      "gridPos": {"h":4,"w":4,"x":8,"y":1},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "options": { "colorMode": "background", "reduceOptions": {"calcs":["lastNotNull"]} },
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{"color":"green","value":0},{"color":"orange","value":50},{"color":"red","value":100}] }, "color": {"mode":"thresholds"} } },
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT COUNT(*)::int AS value FROM pg_stat_activity WHERE state = 'active' AND backend_type = 'client backend'", "refId":"A" }]
+    },
+
+    {
+      "id": 5, "type": "stat", "title": "Idle in Transaction",
+      "gridPos": {"h":4,"w":4,"x":12,"y":1},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "options": { "colorMode": "background", "reduceOptions": {"calcs":["lastNotNull"]} },
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{"color":"green","value":0},{"color":"red","value":1}] }, "color": {"mode":"thresholds"} } },
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT COUNT(*)::int AS value FROM query_advisor.idle_in_transaction(p_min_duration_s => 30)", "refId":"A" }]
+    },
+
+    {
+      "id": 6, "type": "stat", "title": "Lock Bekleyen",
+      "gridPos": {"h":4,"w":4,"x":16,"y":1},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "options": { "colorMode": "background", "reduceOptions": {"calcs":["lastNotNull"]} },
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{"color":"green","value":0},{"color":"red","value":1}] }, "color": {"mode":"thresholds"} } },
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT COUNT(*)::int AS value FROM pg_locks WHERE NOT granted", "refId":"A" }]
+    },
+
+    {
+      "id": 7, "type": "stat", "title": "Deadlock (toplam)",
+      "gridPos": {"h":4,"w":4,"x":20,"y":1},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "options": { "colorMode": "background", "reduceOptions": {"calcs":["lastNotNull"]} },
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{"color":"green","value":0},{"color":"orange","value":5},{"color":"red","value":20}] }, "color": {"mode":"thresholds"} } },
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT COALESCE(SUM(deadlocks),0)::int AS value FROM pg_stat_database WHERE datname NOT IN ('template0','template1')", "refId":"A" }]
+    },
+
+    { "type": "row", "title": "Oncelikli Bulgular", "collapsed": false, "gridPos": {"h":1,"w":24,"x":0,"y":5}, "id": 10 },
+
+    {
+      "id": 11, "type": "table", "title": "CRITICAL / WARNING Bulgular (report)",
+      "gridPos": {"h":8,"w":24,"x":0,"y":6},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "options": { "sortBy": [{"displayName":"priority","desc":false}] },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          { "matcher":{"id":"byName","options":"priority"}, "properties":[{"id":"custom.width","value":100},{"id":"color","mode":"thresholds"},{"id":"thresholds","steps":[{"color":"red","value":null},{"color":"orange","value":"2-WARNING"}]}] },
+          { "matcher":{"id":"byName","options":"action"},   "properties":[{"id":"custom.width","value":400}] }
+        ]
+      },
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT priority, category, object_name, finding, action FROM query_advisor.report() WHERE priority IN ('1-CRITICAL','2-WARNING') ORDER BY priority, category LIMIT 50", "refId":"A" }]
+    },
+
+    { "type": "row", "title": "Vacuum & Dead Tuple", "collapsed": false, "gridPos": {"h":1,"w":24,"x":0,"y":14}, "id": 20 },
+
+    {
+      "id": 21, "type": "table", "title": "Tablo Sagligi (sorunlu tablolar)",
+      "gridPos": {"h":8,"w":12,"x":0,"y":15},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT schema_name, table_name, live_tuples, dead_tuples, dead_ratio_pct AS \"dead_%\", table_size, health_status FROM query_advisor.table_health() WHERE health_status <> 'OK' ORDER BY dead_ratio_pct DESC LIMIT 15", "refId":"A" }]
+    },
+
+    {
+      "id": 22, "type": "table", "title": "Vacuum Needs (esige yaklasmis)",
+      "gridPos": {"h":8,"w":12,"x":12,"y":15},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT schema_name, table_name, dead_rows, vacuum_threshold, dead_rows_pct_filled AS \"dead_%filled\", needs_vacuum, recommendation FROM query_advisor.vacuum_needs(p_threshold_pct => 70) ORDER BY dead_rows_pct_filled DESC LIMIT 15", "refId":"A" }]
+    },
+
+    { "type": "row", "title": "Index Analizi", "collapsed": false, "gridPos": {"h":1,"w":24,"x":0,"y":23}, "id": 30 },
+
+    {
+      "id": 31, "type": "table", "title": "Kullanilmayan Indexler",
+      "gridPos": {"h":8,"w":12,"x":0,"y":24},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT schema_name, table_name, index_name, index_size, index_scans, drop_command FROM query_advisor.unused_indexes() WHERE NOT is_primary ORDER BY index_size_mb DESC LIMIT 15", "refId":"A" }]
+    },
+
+    {
+      "id": 32, "type": "table", "title": "Index Eksikligi (yuksek seq scan)",
+      "gridPos": {"h":8,"w":12,"x":12,"y":24},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT schema_name, table_name, seq_scan_count, index_scan_count, live_tuples, table_size, priority, recommendation FROM query_advisor.missing_indexes() ORDER BY priority, seq_scan_count DESC LIMIT 15", "refId":"A" }]
+    },
+
+    {
+      "id": 33, "type": "table", "title": "FK Index Eksikligi",
+      "gridPos": {"h":8,"w":12,"x":0,"y":32},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT schema_name, table_name, fk_columns, referenced_table, seq_scans, create_index_sql FROM query_advisor.fk_without_index() ORDER BY seq_scans DESC LIMIT 15", "refId":"A" }]
+    },
+
+    {
+      "id": 34, "type": "table", "title": "Index Bloat Tahmini",
+      "gridPos": {"h":8,"w":12,"x":12,"y":32},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT schema_name, index_name, index_size, table_dead_pct AS \"dead_%\", bloat_ratio_pct AS \"bloat_%\", estimated_waste, risk_level, recommendation FROM query_advisor.index_bloat_estimate(p_min_bloat_pct => 20) ORDER BY bloat_ratio_pct DESC LIMIT 15", "refId":"A" }]
+    },
+
+    { "type": "row", "title": "Sorgu Performansi", "collapsed": false, "gridPos": {"h":1,"w":24,"x":0,"y":40}, "id": 40 },
+
+    {
+      "id": 41, "type": "table", "title": "En Yavas 15 Sorgu (pg_stat_statements)",
+      "gridPos": {"h":8,"w":24,"x":0,"y":41},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "fieldConfig": { "defaults": {}, "overrides": [ { "matcher":{"id":"byName","options":"query_text"}, "properties":[{"id":"custom.width","value":400}] } ] },
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT query_id, left(query_text,120) AS query_text, calls, mean_exec_ms, max_exec_ms, cache_hit_pct, recommendation FROM query_advisor.slow_queries(p_top_n => 15, p_min_calls => 3) ORDER BY mean_exec_ms DESC", "refId":"A" }]
+    },
+
+    {
+      "id": 42, "type": "table", "title": "Anlik Uzun Sorgular (>30s)",
+      "gridPos": {"h":6,"w":12,"x":0,"y":49},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT pid, username, state, wait_event_type, duration_seconds, left(query_text,100) AS query FROM query_advisor.long_running_queries(p_min_duration_s => 30) ORDER BY duration_seconds DESC", "refId":"A" }]
+    },
+
+    {
+      "id": 43, "type": "table", "title": "Wait Event Ozeti",
+      "gridPos": {"h":6,"w":12,"x":12,"y":49},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT wait_event_type, wait_event, session_count, pct_of_total AS \"toplam_%\", risk_level, explanation FROM query_advisor.wait_event_summary() ORDER BY session_count DESC LIMIT 20", "refId":"A" }]
+    },
+
+    { "type": "row", "title": "Lock & Transaction", "collapsed": false, "gridPos": {"h":1,"w":24,"x":0,"y":55}, "id": 50 },
+
+    {
+      "id": 51, "type": "table", "title": "Lock Bekleme Zinciri",
+      "gridPos": {"h":6,"w":12,"x":0,"y":56},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT waiting_pid, waiting_user, left(waiting_query,80) AS waiting_query, waiting_duration, blocking_pid, blocking_user, lock_type, relation_name FROM query_advisor.lock_waits() ORDER BY waiting_duration DESC", "refId":"A" }]
+    },
+
+    {
+      "id": 52, "type": "table", "title": "Idle in Transaction Sessionlar",
+      "gridPos": {"h":6,"w":12,"x":12,"y":56},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT pid, username, application_name, duration_seconds, lock_count, risk_level, recommendation FROM query_advisor.idle_in_transaction(p_min_duration_s => 30) ORDER BY duration_seconds DESC", "refId":"A" }]
+    },
+
+    { "type": "row", "title": "Baglanti & Konfigurasyon", "collapsed": false, "gridPos": {"h":1,"w":24,"x":0,"y":62}, "id": 60 },
+
+    {
+      "id": 61, "type": "table", "title": "Baglanti Istatistikleri",
+      "gridPos": {"h":7,"w":12,"x":0,"y":63},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT category, metric, value, pct_of_max AS \"max_%\", risk_level, detail FROM query_advisor.connection_stats() ORDER BY CASE risk_level WHEN 'CRITICAL' THEN 0 WHEN 'WARNING' THEN 1 ELSE 2 END, category", "refId":"A" }]
+    },
+
+    {
+      "id": 62, "type": "table", "title": "Konfigurasyon Danismani (sorunlu)",
+      "gridPos": {"h":7,"w":12,"x":12,"y":63},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT parameter, current_value, recommended_value, risk_level, explanation FROM query_advisor.config_advisor() WHERE risk_level <> 'OK' ORDER BY CASE risk_level WHEN 'CRITICAL' THEN 0 WHEN 'WARNING' THEN 1 ELSE 2 END", "refId":"A" }]
+    },
+
+    { "type": "row", "title": "Guvenlik & Kapasite", "collapsed": false, "gridPos": {"h":1,"w":24,"x":0,"y":70}, "id": 70 },
+
+    {
+      "id": 71, "type": "table", "title": "Yetki Denetimi (CRITICAL/WARNING)",
+      "gridPos": {"h":7,"w":12,"x":0,"y":71},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT audit_type, role_name, object_schema, object_name, privileges, risk_level, recommendation FROM query_advisor.table_privileges_audit() WHERE risk_level IN ('CRITICAL','WARNING') ORDER BY CASE risk_level WHEN 'CRITICAL' THEN 0 ELSE 1 END", "refId":"A" }]
+    },
+
+    {
+      "id": 72, "type": "table", "title": "Sequence Taşma Riski",
+      "gridPos": {"h":7,"w":12,"x":12,"y":71},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT schema_name, sequence_name, data_type, used_pct AS \"kullanim_%\", remaining_values, risk_level, recommendation FROM query_advisor.sequence_health(p_pct_warn => 75) WHERE risk_level NOT LIKE 'OK%' ORDER BY used_pct DESC", "refId":"A" }]
+    },
+
+    {
+      "id": 73, "type": "table", "title": "Tablespace Kullanimi",
+      "gridPos": {"h":6,"w":12,"x":0,"y":78},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT tablespace_name, location, total_size, object_count, table_count, index_count, risk_level, recommendation FROM query_advisor.tablespace_usage() ORDER BY total_size_bytes DESC", "refId":"A" }]
+    },
+
+    {
+      "id": 74, "type": "table", "title": "TOAST Analizi (sismiş tablolar)",
+      "gridPos": {"h":6,"w":12,"x":12,"y":78},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT schema_name, table_name, heap_size, toast_size, toast_pct AS \"toast_%\", live_tuples, risk_level, recommendation FROM query_advisor.toast_analysis(p_min_toast_mb => 1) ORDER BY toast_pct DESC LIMIT 15", "refId":"A" }]
+    },
+
+    { "type": "row", "title": "Vacuum Ilerleme & Temp Dosyalar", "collapsed": false, "gridPos": {"h":1,"w":24,"x":0,"y":84}, "id": 80 },
+
+    {
+      "id": 81, "type": "table", "title": "Aktif Vacuum / Autovacuum",
+      "gridPos": {"h":6,"w":12,"x":0,"y":85},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT pid, operation, schema_name, table_name, phase, progress_pct AS \"ilerleme_%\", dead_tuples_found, duration_seconds, is_autovacuum FROM query_advisor.vacuum_progress() ORDER BY duration_seconds DESC", "refId":"A" }]
+    },
+
+    {
+      "id": 82, "type": "table", "title": "Temp File Kullanimi (work_mem spill)",
+      "gridPos": {"h":6,"w":12,"x":12,"y":85},
+      "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"},
+      "targets": [{ "datasource": {"type":"postgres","uid":"${DS_POSTGRESQL}"}, "editorMode":"code", "format":"table", "rawQuery":true, "rawSql":"SELECT database_name, total_temp_files, total_temp_size, work_mem_current, sort_mem_multiplier AS \"kac_work_mem\", risk_level, recommendation FROM query_advisor.temp_file_stats(p_top_n => 10) ORDER BY total_temp_files DESC", "refId":"A" }]
+    }
+
+  ]
+}
