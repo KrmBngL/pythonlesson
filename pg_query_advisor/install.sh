@@ -1,8 +1,19 @@
 #!/usr/bin/env bash
-# install.sh — pg_query_advisor kurulum yardımcı scripti
-# RHEL 8 / RHEL 9 — PostgreSQL 18 için
+# install.sh — pg_query_advisor kurulum / güncelleme yardımcı scripti
+# RHEL 8 / RHEL 9 — PostgreSQL 17 veya 18
 
 set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Renkli çıktı
+# ---------------------------------------------------------------------------
+RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'
+CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
+info()   { echo -e "${CYAN}[INFO]${RESET}  $*"; }
+ok()     { echo -e "${GREEN}[OK]${RESET}    $*"; }
+warn()   { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
+err()    { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
+header() { echo -e "\n${BOLD}${CYAN}=== $* ===${RESET}"; }
 
 # ---------------------------------------------------------------------------
 # Kullanım
@@ -12,37 +23,54 @@ usage() {
 Kullanım: $0 [SEÇENEKLER]
 
   -v, --pg-version NUM    PostgreSQL major version (varsayılan: 18)
-  -d, --database   DB     Extension'ı kuracak veritabanı (varsayılan: postgres)
+  -U, --user       USER   PostgreSQL superuser (varsayılan: postgres)
+  -d, --database   DB     Extension kurulacak veritabanı (varsayılan: postgres)
+  -a, --all-db            Tüm kullanıcı veritabanlarına kur
+  -u, --upgrade           Mevcut extension'ı 1.5'e güncelle (ALTER EXTENSION ... UPDATE)
   -h, --help              Bu yardım mesajını göster
 
 Örnekler:
-  $0                          # PG18, postgres DB
-  $0 -v 18 -d mydb            # PG18, mydb
+  $0                              # PG18, postgres DB
+  $0 -v 17 -d mydb                # PG17, mydb
+  $0 -v 18 -a                     # PG18, tüm veritabanları
+  $0 -v 18 -d mydb -u             # PG18, mydb — güncelle (1.x -> 1.5)
+  $0 -v 18 -a -u                  # PG18, tüm DB — güncelle
 EOF
     exit 0
 }
 
+# ---------------------------------------------------------------------------
+# Varsayılanlar
+# ---------------------------------------------------------------------------
 PG_VERSION=18
+PG_USER=postgres
 DBNAME=postgres
+ALL_DB=false
+UPGRADE=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         -v|--pg-version) PG_VERSION="$2"; shift 2 ;;
+        -U|--user)       PG_USER="$2";    shift 2 ;;
         -d|--database)   DBNAME="$2";     shift 2 ;;
+        -a|--all-db)     ALL_DB=true;     shift ;;
+        -u|--upgrade)    UPGRADE=true;    shift ;;
         -h|--help)       usage ;;
-        *) echo "Bilinmeyen parametre: $1"; usage ;;
+        *) err "Bilinmeyen parametre: $1"; usage ;;
     esac
 done
 
 PG_CONFIG="/usr/pgsql-${PG_VERSION}/bin/pg_config"
 PSQL="/usr/pgsql-${PG_VERSION}/bin/psql"
+EXT_DIR="/usr/pgsql-${PG_VERSION}/share/extension"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TARGET_VERSION="1.5"
 
 # ---------------------------------------------------------------------------
-# Kontroller
+# pg_config kontrolü
 # ---------------------------------------------------------------------------
 if [[ ! -x "$PG_CONFIG" ]]; then
-    echo "HATA: $PG_CONFIG bulunamadı."
-    echo "PostgreSQL ${PG_VERSION} kurulu mu? PGDG repo'dan kurabilirsiniz:"
+    err "$PG_CONFIG bulunamadı. PostgreSQL ${PG_VERSION} kurulu mu?"
     echo ""
     echo "  # RHEL 8:"
     echo "  dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm"
@@ -56,90 +84,141 @@ if [[ ! -x "$PG_CONFIG" ]]; then
     exit 1
 fi
 
-echo "========================================"
-echo " pg_query_advisor Kurulum"
-echo " PostgreSQL : $PG_VERSION"
-echo " Veritabanı : $DBNAME"
-echo "========================================"
-
-# ---------------------------------------------------------------------------
-# Extension dosyalarını kur
-# ---------------------------------------------------------------------------
-echo "[1/3] Extension dosyaları kopyalanıyor..."
-make install PG_CONFIG="$PG_CONFIG"
-echo "      OK"
-
-# ---------------------------------------------------------------------------
-# pg_stat_statements kontrolü (zorunlu değil ama önerilir)
-# ---------------------------------------------------------------------------
-echo "[2/3] pg_stat_statements kontrolü..."
-SL_LIBS=$("$PSQL" -U postgres -d "$DBNAME" -tAc \
-    "SELECT current_setting('shared_preload_libraries');" 2>/dev/null || true)
-
-if echo "$SL_LIBS" | grep -q "pg_stat_statements"; then
-    echo "      pg_stat_statements shared_preload_libraries içinde — OK"
-else
-    echo "      UYARI: pg_stat_statements shared_preload_libraries içinde değil."
-    echo "      Yavaş sorgu analizi için /var/lib/pgsql/${PG_VERSION}/data/postgresql.conf dosyasına ekleyin:"
-    echo "        shared_preload_libraries = 'pg_stat_statements'"
-    echo "      Ardından PostgreSQL'i yeniden başlatın:"
-    echo "        systemctl restart postgresql-${PG_VERSION}"
-    echo "      Ve veritabanında çalıştırın:"
-    echo "        CREATE EXTENSION pg_stat_statements;"
+if [[ ! -x "$PSQL" ]]; then
+    err "$PSQL bulunamadı."
+    exit 1
 fi
 
 # ---------------------------------------------------------------------------
-# Extension'ı veritabanında oluştur
+# Özet
 # ---------------------------------------------------------------------------
-echo "[3/3] Extension oluşturuluyor: $DBNAME..."
-"$PSQL" -U postgres -d "$DBNAME" -c "CREATE EXTENSION IF NOT EXISTS pg_query_advisor;"
-echo "      OK"
+header "pg_query_advisor ${TARGET_VERSION} Kurulum"
+info "PostgreSQL sürümü : ${PG_VERSION}"
+info "Kullanıcı         : ${PG_USER}"
+if $ALL_DB; then
+    info "Hedef             : Tüm kullanıcı veritabanları"
+else
+    info "Veritabanı        : ${DBNAME}"
+fi
+$UPGRADE && info "Mod               : UPGRADE (ALTER EXTENSION ... UPDATE TO '${TARGET_VERSION}')" \
+         || info "Mod               : Yeni kurulum (CREATE EXTENSION)"
 
 # ---------------------------------------------------------------------------
-# Kullanım özeti
+# Adım 1 — Extension dosyalarını PostgreSQL dizinine kopyala
 # ---------------------------------------------------------------------------
-cat <<'EOF'
+header "Adım 1/3 — Extension dosyaları kopyalanıyor"
 
-======================================== Kurulum Tamamlandı ========================================
+if make -C "$SCRIPT_DIR" install PG_CONFIG="$PG_CONFIG" 2>/dev/null; then
+    ok "make install başarılı"
+else
+    warn "make install başarısız — elle kopyalanıyor..."
+    if [[ ! -d "$EXT_DIR" ]]; then
+        err "$EXT_DIR dizini bulunamadı."
+        exit 1
+    fi
+    install -m 0644 "${SCRIPT_DIR}/pg_query_advisor.control" "$EXT_DIR/"
+    install -m 0644 "${SCRIPT_DIR}"/pg_query_advisor--*.sql  "$EXT_DIR/"
+    ok "Dosyalar ${EXT_DIR} dizinine kopyalandı"
+fi
 
-Hızlı başlangıç:
+# ---------------------------------------------------------------------------
+# Adım 2 — pg_stat_statements kontrolü
+# ---------------------------------------------------------------------------
+header "Adım 2/3 — pg_stat_statements kontrolü"
 
-  -- Genel sağlık özeti (tek bakışta tüm sorunların sayısı)
-  SELECT * FROM query_advisor.health_summary;
+SL_LIBS=$("$PSQL" -U "$PG_USER" -d "${DBNAME}" -tAc \
+    "SELECT current_setting('shared_preload_libraries');" 2>/dev/null || true)
 
-  -- Tam öneri raporu — 1-CRITICAL, 2-WARNING, 3-NOTICE sıralamasıyla
-  SELECT * FROM query_advisor.report() ORDER BY priority, category;
+if echo "$SL_LIBS" | grep -q "pg_stat_statements"; then
+    ok "pg_stat_statements shared_preload_libraries içinde"
+else
+    warn "pg_stat_statements shared_preload_libraries içinde değil."
+    echo "  Yavaş sorgu analizi için postgresql.conf dosyasına ekleyin:"
+    echo "    shared_preload_libraries = 'pg_stat_statements'"
+    echo "  Ardından PostgreSQL'i yeniden başlatın:"
+    echo "    systemctl restart postgresql-${PG_VERSION}"
+    echo "  Ve her hedef veritabanında çalıştırın:"
+    echo "    CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
+fi
 
-  -- Belirli şema için
-  SELECT * FROM query_advisor.report('public') ORDER BY priority;
+# ---------------------------------------------------------------------------
+# Adım 3 — Extension'ı veritabanında oluştur / güncelle
+# ---------------------------------------------------------------------------
+header "Adım 3/3 — Extension yükleniyor"
 
-  -- Dead tuple / vacuum durumu
-  SELECT * FROM query_advisor.table_health() WHERE health_status <> 'OK';
+install_to_db() {
+    local db="$1"
+    local current_ver
 
-  -- Kullanılmayan index'ler ve hazır DROP komutları
-  SELECT index_name, index_size, index_scans, drop_command
-  FROM   query_advisor.unused_indexes()
-  WHERE  NOT is_primary AND index_scans = 0;
+    current_ver=$("$PSQL" -U "$PG_USER" -d "$db" -tAc \
+        "SELECT extversion FROM pg_extension WHERE extname = 'pg_query_advisor';" \
+        2>/dev/null || true)
+    current_ver="${current_ver// /}"   # trim whitespace
 
-  -- Duplicate / redundant index çiftleri
-  SELECT * FROM query_advisor.duplicate_indexes();
+    if [[ -z "$current_ver" ]]; then
+        # Kurulu değil — fresh install
+        info "[$db] pg_stat_statements kuruluyor..."
+        "$PSQL" -U "$PG_USER" -d "$db" -c \
+            "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;" > /dev/null 2>&1 || true
+        info "[$db] pg_query_advisor ${TARGET_VERSION} kuruluyor..."
+        "$PSQL" -U "$PG_USER" -d "$db" -c \
+            "CREATE EXTENSION pg_query_advisor;" > /dev/null
+        ok "[$db] pg_query_advisor ${TARGET_VERSION} kuruldu"
+    elif $UPGRADE; then
+        if [[ "$current_ver" == "$TARGET_VERSION" ]]; then
+            ok "[$db] Zaten ${TARGET_VERSION} sürümünde — güncelleme gerekmez"
+        else
+            info "[$db] ${current_ver} → ${TARGET_VERSION} güncelleniyor..."
+            "$PSQL" -U "$PG_USER" -d "$db" -c \
+                "ALTER EXTENSION pg_query_advisor UPDATE TO '${TARGET_VERSION}';" > /dev/null
+            ok "[$db] pg_query_advisor ${TARGET_VERSION} sürümüne güncellendi"
+        fi
+    else
+        warn "[$db] pg_query_advisor zaten kurulu (${current_ver}). Güncellemek için -u bayrağını kullanın."
+    fi
+}
 
-  -- Büyük tablolar için autovacuum ayar önerisi (hazır ALTER TABLE komutu)
-  SELECT table_name, estimated_rows, current_vac_scale,
-         recommended_vac_scale, alter_command
-  FROM   query_advisor.autovacuum_settings()
-  WHERE  recommendation <> 'OK';
+if $ALL_DB; then
+    # Tüm kullanıcı veritabanları (template ve postgres hariç)
+    mapfile -t DB_LIST < <("$PSQL" -U "$PG_USER" -d postgres -tAc \
+        "SELECT datname FROM pg_database
+         WHERE datistemplate = false
+           AND datname NOT IN ('postgres')
+         ORDER BY datname;" 2>/dev/null)
 
-  -- Yavaş sorgular (pg_stat_statements gerektirir)
-  SELECT query_text, calls, mean_exec_ms, recommendation
-  FROM   query_advisor.slow_queries(p_top_n => 10);
+    # postgres veritabanını da dahil et
+    DB_LIST=("postgres" "${DB_LIST[@]}")
 
-  -- Anlık uzun çalışan sorgular
-  SELECT pid, username, duration_seconds, query_text, recommendation
-  FROM   query_advisor.long_running_queries(p_min_duration_s => 5);
+    for db in "${DB_LIST[@]}"; do
+        [[ -z "$db" ]] && continue
+        install_to_db "$db"
+    done
+else
+    install_to_db "$DBNAME"
+fi
 
-  -- Lock bekleme zinciri
-  SELECT * FROM query_advisor.lock_waits();
-
-====================================================================================================
-EOF
+# ---------------------------------------------------------------------------
+# Tamamlandı
+# ---------------------------------------------------------------------------
+header "Kurulum Tamamlandı"
+echo ""
+echo "  Hızlı başlangıç:"
+echo ""
+echo "  -- Genel sağlık özeti"
+echo "  SELECT * FROM query_advisor.health_summary;"
+echo ""
+echo "  -- Tam öneri raporu"
+echo "  SELECT * FROM query_advisor.report() ORDER BY priority, category;"
+echo ""
+echo "  -- Yavaş sorgular"
+echo "  SELECT query_text, calls, mean_exec_ms, recommendation"
+echo "  FROM   query_advisor.slow_queries(p_top_n => 10);"
+echo ""
+echo "  -- Kullanılmayan indexler ve DROP komutları"
+echo "  SELECT index_name, index_size, drop_command"
+echo "  FROM   query_advisor.unused_indexes()"
+echo "  WHERE  NOT is_primary AND index_scans = 0;"
+echo ""
+echo "  Tam rapor için:"
+echo "  psql -U ${PG_USER} -d <veritabani> -f ${SCRIPT_DIR}/check_all.sql"
+echo ""
