@@ -1,0 +1,19 @@
+apiVersion: 1
+
+datasources:
+  - name: PostgreSQL
+    type: postgres
+    uid: pg-query-advisor-ds
+    url: localhost:5432          # Sunucu adresi
+    user: postgres               # Kullanici
+    secureJsonData:
+      password: "postgres"       # Sifre
+    jsonData:
+      database: mydb             # Veritabani adi
+      sslmode: disable
+      maxOpenConns: 5
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+      postgresVersion: 1800      # PG18 = 1800, PG17 = 1700
+      timescaledb: false
+    editable: true
