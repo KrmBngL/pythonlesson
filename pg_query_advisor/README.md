@@ -89,7 +89,11 @@ Tüm fonksiyonlar **`query_advisor`** şeması altındadır.
 
 ---
 
-## Kurulum — RHEL 8 / RHEL 9 + PostgreSQL 18
+## Sıfırdan Kurulum — RHEL 8 / RHEL 9 + PostgreSQL 18
+
+> Temiz bir sunucudan başlayarak pg_query_advisor'ı tam olarak kurmak için aşağıdaki adımları sırayla uygulayın.
+
+---
 
 ### Adım 1 — PGDG Reposunu Ekle
 
@@ -103,19 +107,32 @@ dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_6
 dnf -qy module disable postgresql
 ```
 
+---
+
 ### Adım 2 — PostgreSQL 18'i Kur
 
 ```bash
 dnf install -y postgresql18-server postgresql18
 ```
 
-### Adım 3 — Veritabanını İlklendir
+> PG17 kullanmak isteyenler için: `postgresql17-server postgresql17`
+
+---
+
+### Adım 3 — Veritabanını İlklendir ve Başlat
 
 ```bash
 /usr/pgsql-18/bin/postgresql-18-setup initdb
-systemctl enable postgresql-18
-systemctl start postgresql-18
+systemctl enable --now postgresql-18
 ```
+
+Servis durumunu kontrol et:
+
+```bash
+systemctl status postgresql-18
+```
+
+---
 
 ### Adım 4 — pg_stat_statements için postgresql.conf Düzenle
 
@@ -125,18 +142,17 @@ vi /var/lib/pgsql/18/data/postgresql.conf
 
 Şu satırı ekle veya uncomment et:
 
-```
+```ini
 shared_preload_libraries = 'pg_stat_statements'
+
+# İsteğe bağlı ek ayarlar:
+pg_stat_statements.max           = 10000
+pg_stat_statements.track         = all
+pg_stat_statements.track_utility = on
+pg_stat_statements.save          = on
 ```
 
-İsteğe bağlı ek ayarlar:
-
-```
-pg_stat_statements.max             = 10000
-pg_stat_statements.track           = all
-pg_stat_statements.track_utility   = on
-pg_stat_statements.save            = on
-```
+---
 
 ### Adım 5 — PostgreSQL'i Yeniden Başlat
 
@@ -144,46 +160,110 @@ pg_stat_statements.save            = on
 systemctl restart postgresql-18
 ```
 
-### Adım 6 — Extension Dosyalarını Kopyala
+---
 
-**Yöntem A: make install (postgresql18-devel gerekli)**
+### Adım 6 — Repoyu İndir
 
 ```bash
+cd /opt
+git clone https://github.com/KrmBngL/pythonlesson.git pg_query_advisor_repo
+cd pg_query_advisor_repo
+git checkout extension
+```
+
+---
+
+### Adım 7 — Extension Dosyalarını Kopyala
+
+**Yöntem A — Otomatik (önerilen)**
+
+```bash
+cd pg_query_advisor
+bash install.sh -v 18 -d mydb
+```
+
+> Tek komutla dosyaları kopyalar, `pg_stat_statements` kontrolü yapar ve extension'ı oluşturur.
+> Tüm veritabanlarına kurmak için: `bash install.sh -v 18 -a`
+
+**Yöntem B — make install (postgresql18-devel gerekli)**
+
+```bash
+dnf install -y postgresql18-devel
 cd pg_query_advisor
 make PG_CONFIG=/usr/pgsql-18/bin/pg_config install
 ```
 
-**Yöntem B: Manuel kopyalama (devel paketi olmadan)**
+**Yöntem C — Manuel kopyalama (devel paketi olmadan)**
 
 ```bash
 EXT_DIR=/usr/pgsql-18/share/extension
-cp pg_query_advisor.control          $EXT_DIR/
-cp pg_query_advisor--1.0.sql         $EXT_DIR/
-cp pg_query_advisor--1.0--1.1.sql    $EXT_DIR/
-cp pg_query_advisor--1.1.sql         $EXT_DIR/
-cp pg_query_advisor--1.1--1.2.sql    $EXT_DIR/
-cp pg_query_advisor--1.2.sql         $EXT_DIR/
-cp pg_query_advisor--1.2--1.3.sql    $EXT_DIR/
-cp pg_query_advisor--1.3.sql         $EXT_DIR/
+cd pg_query_advisor
+
+cp pg_query_advisor.control       $EXT_DIR/
+cp pg_query_advisor--1.0.sql      $EXT_DIR/
+cp pg_query_advisor--1.0--1.1.sql $EXT_DIR/
+cp pg_query_advisor--1.1.sql      $EXT_DIR/
+cp pg_query_advisor--1.1--1.2.sql $EXT_DIR/
+cp pg_query_advisor--1.2.sql      $EXT_DIR/
+cp pg_query_advisor--1.2--1.3.sql $EXT_DIR/
+cp pg_query_advisor--1.3.sql      $EXT_DIR/
+cp pg_query_advisor--1.3--1.4.sql $EXT_DIR/
+cp pg_query_advisor--1.4.sql      $EXT_DIR/
+cp pg_query_advisor--1.4--1.5.sql $EXT_DIR/
+cp pg_query_advisor--1.5.sql      $EXT_DIR/
 ```
 
-### Adım 7 — Extension'ı Oluştur
+---
+
+### Adım 8 — Extension'ı Veritabanında Oluştur
 
 ```bash
+# pg_stat_statements önce kurulmalı
 psql -U postgres -d mydb -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
+
+# pg_query_advisor kur
 psql -U postgres -d mydb -c "CREATE EXTENSION pg_query_advisor;"
-```
-
-Önceki sürümden güncelleme:
-
-```bash
-psql -U postgres -d mydb -c "ALTER EXTENSION pg_query_advisor UPDATE TO '1.5';"
 ```
 
 Kurulumu doğrula:
 
 ```bash
-psql -U postgres -d mydb -c "SELECT extversion FROM pg_extension WHERE extname = 'pg_query_advisor';"
+psql -U postgres -d mydb -c "SELECT extname, extversion FROM pg_extension WHERE extname = 'pg_query_advisor';"
+```
+
+Beklenen çıktı:
+
+```
+     extname      | extversion
+------------------+------------
+ pg_query_advisor | 1.5
+```
+
+---
+
+### Adım 9 — Tam Raporu Çalıştır
+
+```bash
+psql -U postgres -d mydb -f pg_query_advisor/check_all.sql
+```
+
+Ya da bash ile HTML rapor:
+
+```bash
+bash pg_query_advisor/check_all.sh -v 18 -d mydb -o /var/reports
+# Rapor: /var/reports/mydb_latest.html
+```
+
+---
+
+### Mevcut Sürümden Güncelleme
+
+```bash
+# Tek veritabanı
+psql -U postgres -d mydb -c "ALTER EXTENSION pg_query_advisor UPDATE TO '1.5';"
+
+# Tüm veritabanları
+bash install.sh -v 18 -a -u
 ```
 
 ---
