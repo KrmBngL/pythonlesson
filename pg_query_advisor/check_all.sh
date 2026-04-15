@@ -126,54 +126,270 @@ run_report() {
         --html \
         -f "$CHECK_SQL" > "$tmp_body" 2>&1 || true
 
+    # DB bilgilerini topla
+    local pg_ver host_name db_size
+    pg_ver=$("$PSQL"  -U "$PG_USER" -d "$db" -tAc "SELECT version();" 2>/dev/null | cut -d' ' -f1-2 || echo "PostgreSQL ${PG_VERSION}")
+    host_name=$(hostname -f 2>/dev/null || hostname)
+    db_size=$("$PSQL" -U "$PG_USER" -d "$db" -tAc "SELECT pg_size_pretty(pg_database_size(current_database()));" 2>/dev/null || echo "?")
+
+    # CRITICAL / WARNING sayıları
+    local cnt_crit cnt_warn cnt_notice
+    cnt_crit=$(  "$PSQL" -U "$PG_USER" -d "$db" -tAc "SELECT COUNT(*) FROM query_advisor.report() WHERE priority='1';" 2>/dev/null | tr -d ' ' || echo 0)
+    cnt_warn=$(  "$PSQL" -U "$PG_USER" -d "$db" -tAc "SELECT COUNT(*) FROM query_advisor.report() WHERE priority='2';" 2>/dev/null | tr -d ' ' || echo 0)
+    cnt_notice=$("$PSQL" -U "$PG_USER" -d "$db" -tAc "SELECT COUNT(*) FROM query_advisor.report() WHERE priority='3';" 2>/dev/null | tr -d ' ' || echo 0)
+
     # Tam HTML sayfasını oluştur
     cat > "$html_file" <<HTML
 <!DOCTYPE html>
 <html lang="tr">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>pg_query_advisor — ${db} — ${ts}</title>
-  <style>
-    body        { font-family: 'Segoe UI', Arial, sans-serif; background:#f4f6f8; color:#222; margin:0; padding:0; }
-    header      { background:#1a3a5c; color:#fff; padding:18px 32px; }
-    header h1   { margin:0; font-size:1.4em; }
-    header p    { margin:4px 0 0; font-size:0.9em; opacity:0.8; }
-    main        { padding:24px 32px; max-width:1400px; margin:auto; }
-    h2          { color:#1a3a5c; border-bottom:2px solid #1a3a5c; padding-bottom:4px; margin-top:32px; }
-    table       { border-collapse:collapse; width:100%; margin:12px 0 24px; font-size:0.88em; background:#fff;
-                  box-shadow:0 1px 4px rgba(0,0,0,.12); border-radius:6px; overflow:hidden; }
-    th          { background:#1a3a5c; color:#fff; padding:8px 12px; text-align:left; }
-    tr:nth-child(even) { background:#f0f4f8; }
-    td          { padding:7px 12px; border-bottom:1px solid #e0e6ed; }
-    .critical   { color:#c0392b; font-weight:bold; }
-    .warning    { color:#e67e22; font-weight:bold; }
-    .ok         { color:#27ae60; }
-    footer      { text-align:center; padding:16px; color:#888; font-size:0.8em; border-top:1px solid #ddd; margin-top:32px; }
-    .badge      { display:inline-block; padding:2px 10px; border-radius:12px; font-size:0.8em; font-weight:bold; }
-    .badge-ext  { background:#1a3a5c; color:#fff; }
-    .badge-db   { background:#2980b9; color:#fff; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pg_query_advisor AWR — ${db} — ${ts}</title>
+<style>
+/* ── Reset & Base ─────────────────────────────────────────── */
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',Arial,sans-serif;font-size:13px;background:#eef1f5;color:#1a1a1a}
+a{color:#1a5276;text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* ── Top Banner ───────────────────────────────────────────── */
+.banner{background:linear-gradient(135deg,#003366 0%,#00509e 100%);color:#fff;padding:0}
+.banner-inner{max-width:1300px;margin:auto;padding:18px 28px 14px}
+.banner h1{font-size:1.35em;font-weight:700;letter-spacing:.5px}
+.banner h1 span{font-size:.7em;font-weight:400;opacity:.8;margin-left:10px}
+
+/* ── DB Info Grid ─────────────────────────────────────────── */
+.db-info{background:#00285a;color:#cfe3ff;display:flex;flex-wrap:wrap;gap:0;border-top:1px solid #004080}
+.db-info-cell{padding:7px 22px;border-right:1px solid #004d99;font-size:.82em}
+.db-info-cell strong{display:block;font-size:.78em;text-transform:uppercase;opacity:.7;margin-bottom:2px}
+
+/* ── Scorecard ────────────────────────────────────────────── */
+.scorecard{display:flex;gap:12px;max-width:1300px;margin:16px auto 0;padding:0 28px}
+.score-box{flex:1;border-radius:6px;padding:12px 16px;text-align:center;font-weight:700}
+.score-box .num{font-size:2.2em;display:block;line-height:1.1}
+.score-box .lbl{font-size:.75em;text-transform:uppercase;letter-spacing:.5px;opacity:.85}
+.sc-critical{background:#c0392b;color:#fff}
+.sc-warning {background:#e67e22;color:#fff}
+.sc-notice  {background:#2980b9;color:#fff}
+.sc-ok      {background:#27ae60;color:#fff}
+
+/* ── TOC ──────────────────────────────────────────────────── */
+.toc{background:#fff;border:1px solid #d0dae8;border-radius:6px;max-width:1300px;margin:20px auto 0;padding:18px 28px}
+.toc h2{color:#003366;font-size:1em;border-bottom:1px solid #d0dae8;padding-bottom:6px;margin-bottom:10px}
+.toc ol{column-count:3;column-gap:28px;padding-left:20px}
+.toc li{font-size:.82em;margin-bottom:3px}
+@media(max-width:900px){.toc ol{column-count:2}}
+
+/* ── Main Content ─────────────────────────────────────────── */
+.content{max-width:1300px;margin:20px auto 0;padding:0 28px 40px}
+
+/* ── Section ─────────────────────────────────────────────── */
+.section{background:#fff;border:1px solid #d0dae8;border-radius:6px;margin-bottom:18px;overflow:hidden}
+.section-head{background:#003366;color:#fff;padding:9px 16px;display:flex;justify-content:space-between;align-items:center}
+.section-head h2{font-size:.95em;font-weight:600}
+.section-head .back{font-size:.78em;opacity:.8;color:#aad4ff}
+.section-body{padding:0}
+.section-desc{padding:8px 16px 4px;font-size:.8em;color:#555;border-bottom:1px solid #eef}
+
+/* ── Tables ───────────────────────────────────────────────── */
+.section-body table{width:100%;border-collapse:collapse;font-size:.82em}
+.section-body table th{
+  background:#336699;color:#fff;padding:7px 10px;
+  text-align:left;font-weight:600;white-space:nowrap;
+  position:sticky;top:0;
+}
+.section-body table td{padding:6px 10px;border-bottom:1px solid #e8eef5;vertical-align:top;word-break:break-word}
+.section-body table tr:nth-child(even) td{background:#f4f8ff}
+.section-body table tr:hover td{background:#e8f0fb}
+
+/* ── Row Highlighting ─────────────────────────────────────── */
+tr.rc  td{background:#fff0f0!important;border-left:3px solid #c0392b}
+tr.rw  td{background:#fffbf0!important;border-left:3px solid #e67e22}
+tr.rn  td{background:#f0f8ff!important}
+tr.rok td{background:#f0fff4!important}
+
+/* ── Inline Badges ────────────────────────────────────────── */
+.bc{display:inline-block;padding:1px 7px;border-radius:3px;font-size:.78em;font-weight:700;background:#c0392b;color:#fff}
+.bw{display:inline-block;padding:1px 7px;border-radius:3px;font-size:.78em;font-weight:700;background:#e67e22;color:#fff}
+.bn{display:inline-block;padding:1px 7px;border-radius:3px;font-size:.78em;font-weight:700;background:#2980b9;color:#fff}
+.bo{display:inline-block;padding:1px 7px;border-radius:3px;font-size:.78em;font-weight:700;background:#27ae60;color:#fff}
+
+/* ── No Data ──────────────────────────────────────────────── */
+.no-data{padding:14px 16px;color:#888;font-style:italic;font-size:.85em}
+
+/* ── Footer ───────────────────────────────────────────────── */
+.footer{text-align:center;padding:18px;color:#888;font-size:.78em;border-top:1px solid #ddd;margin-top:10px}
+
+/* ── Print ────────────────────────────────────────────────── */
+@media print{
+  .banner{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .section{break-inside:avoid}
+}
+</style>
 </head>
 <body>
-<header>
-  <h1>pg_query_advisor Raporu</h1>
-  <p>
-    <span class="badge badge-db">Veritabanı: ${db}</span>&nbsp;
-    <span class="badge badge-ext">Sürüm: ${ext_ver}</span>&nbsp;
-    &nbsp;Oluşturulma: ${ts}
-  </p>
-</header>
-<main>
+
+<!-- ── Banner ───────────────────────────────────────────────── -->
+<div class="banner">
+  <div class="banner-inner">
+    <h1>pg_query_advisor Performance Report <span>v${ext_ver}</span></h1>
+  </div>
+  <div class="db-info">
+    <div class="db-info-cell"><strong>Veritabanı</strong>${db}</div>
+    <div class="db-info-cell"><strong>Sürüm</strong>${pg_ver}</div>
+    <div class="db-info-cell"><strong>Sunucu</strong>${host_name}</div>
+    <div class="db-info-cell"><strong>DB Boyutu</strong>${db_size}</div>
+    <div class="db-info-cell"><strong>Rapor Tarihi</strong>${ts}</div>
+    <div class="db-info-cell"><strong>Extension</strong>pg_query_advisor ${ext_ver}</div>
+  </div>
+</div>
+
+<!-- ── Scorecard ─────────────────────────────────────────────── -->
+<div class="scorecard">
+  <div class="score-box sc-critical"><span class="num">${cnt_crit}</span><span class="lbl">Critical</span></div>
+  <div class="score-box sc-warning"> <span class="num">${cnt_warn}</span><span class="lbl">Warning</span></div>
+  <div class="score-box sc-notice">  <span class="num">${cnt_notice}</span><span class="lbl">Notice</span></div>
+  <div class="score-box sc-ok">      <span class="num">$(date '+%H:%M')</span><span class="lbl">Rapor Saati</span></div>
+</div>
+
+<!-- ── Table of Contents ─────────────────────────────────────── -->
+<div class="toc" id="toc">
+  <h2>İçindekiler</h2>
+  <ol>
+    <li><a href="#s0">Genel Sağlık Özeti</a></li>
+    <li><a href="#s1">Öncelikli Bulgular</a></li>
+    <li><a href="#s2">Tablo Sağlığı</a></li>
+    <li><a href="#s3">Tablo Bloat Analizi</a></li>
+    <li><a href="#s4">Index Kullanımı</a></li>
+    <li><a href="#s5">Kullanılmayan Indexler</a></li>
+    <li><a href="#s6">Tekrarlayan Indexler</a></li>
+    <li><a href="#s7">Eksik Indexler</a></li>
+    <li><a href="#s8">Index Sağlığı</a></li>
+    <li><a href="#s9">Autovacuum Ayarları</a></li>
+    <li><a href="#s10">Cache Hit Oranı</a></li>
+    <li><a href="#s11">Yavaş Sorgular</a></li>
+    <li><a href="#s12">Uzun Çalışan Sorgular</a></li>
+    <li><a href="#s13">Lock Bekleme Zinciri</a></li>
+    <li><a href="#s14">Tablo Büyüme Tahmini</a></li>
+    <li><a href="#s15">Partition Adayları</a></li>
+    <li><a href="#s16">Index Önerileri</a></li>
+    <li><a href="#s17">Idle Transaction</a></li>
+    <li><a href="#s18">Vacuum Gereksinimi</a></li>
+    <li><a href="#s19">Replication Slotları</a></li>
+    <li><a href="#s20">Konfigurasyon Danışmanı</a></li>
+    <li><a href="#s21">Korelasyon Kontrolü</a></li>
+    <li><a href="#s22">Sequence Sağlığı</a></li>
+    <li><a href="#s23">FK Index Eksiklikleri</a></li>
+    <li><a href="#s24">Bağlantı İstatistikleri</a></li>
+    <li><a href="#s25">Temp File İstatistikleri</a></li>
+    <li><a href="#s26">Vacuum İlerlemesi</a></li>
+    <li><a href="#s27">Tablespace Kullanımı</a></li>
+    <li><a href="#s28">TOAST Analizi</a></li>
+    <li><a href="#s29">Deadlock İstatistikleri</a></li>
+    <li><a href="#s30">Buffer Cache Doluluk</a></li>
+    <li><a href="#s31">Wait Event Özeti</a></li>
+    <li><a href="#s32">Index Bloat Tahmini</a></li>
+    <li><a href="#s33">Yetki Denetimi</a></li>
+    <li><a href="#s34">Tablo Erişim Metodları</a></li>
+  </ol>
+</div>
+
+<!-- ── Report Body ────────────────────────────────────────────── -->
+<div class="content">
 HTML
 
     cat "$tmp_body" >> "$html_file"
 
     cat >> "$html_file" <<HTML
-</main>
-<footer>
-  pg_query_advisor ${ext_ver} &bull; PostgreSQL ${PG_VERSION} &bull; Oluşturulma: ${ts}
-</footer>
+</div><!-- /content -->
+
+<div class="footer">
+  pg_query_advisor ${ext_ver} &bull; PostgreSQL ${PG_VERSION} &bull; ${host_name} &bull; ${db} &bull; ${ts}
+</div>
+
+<script>
+// Satır renklendirme — td içeriğine göre
+document.querySelectorAll('table tr').forEach(function(tr){
+  var txt = tr.textContent.toUpperCase();
+  if(txt.includes('CRITICAL') || txt.includes('KRITIK'))  { tr.className='rc'; }
+  else if(txt.includes('WARNING') || txt.includes('UYARI')){ tr.className='rw'; }
+  else if(/\bNOTICE\b/.test(txt))                          { tr.className='rn'; }
+  else if(/\bOK\b/.test(txt))                              { tr.className='rok'; }
+});
+
+// Hücre içi badge renklendirme
+document.querySelectorAll('td').forEach(function(td){
+  td.innerHTML = td.innerHTML
+    .replace(/\bCRITICAL\b/g, '<span class="bc">CRITICAL</span>')
+    .replace(/\bKRITIK\b/g,   '<span class="bc">KRİTİK</span>')
+    .replace(/\bWARNING\b/g,  '<span class="bw">WARNING</span>')
+    .replace(/\bUYARI\b/g,    '<span class="bw">UYARI</span>')
+    .replace(/\bNOTICE\b/g,   '<span class="bn">NOTICE</span>')
+    .replace(/(?<![A-Z])\bOK\b(?![A-Z])/g, '<span class="bo">OK</span>');
+});
+
+// Section wrapper — her psql çıktı bloğunu kart içine al
+var sections = [
+  ['s0','0. Genel Sağlık Özeti','health_summary — tüm kategorilerin özet skoru'],
+  ['s1','1. Öncelikli Bulgular','report() — CRITICAL/WARNING/NOTICE sıralı master rapor'],
+  ['s2','2. Tablo Sağlığı','table_health() — dead tuple oranı, last vacuum/analyze'],
+  ['s3','3. Tablo Bloat Analizi','table_bloat() — boşa harcanan alan tahmini'],
+  ['s4','4. Index Kullanımı','index_usage() — scan sayısı, ACTIVE/UNUSED sınıfı'],
+  ['s5','5. Kullanılmayan Indexler','unused_indexes() — hazır DROP INDEX CONCURRENTLY'],
+  ['s6','6. Tekrarlayan Indexler','duplicate_indexes() — aynı leading key paylaşan çiftler'],
+  ['s7','7. Eksik Indexler','missing_indexes() — seq scan >> index scan tablolar'],
+  ['s8','8. Index Sağlığı','index_health() — invalid index tespiti'],
+  ['s9','9. Autovacuum Ayarları','autovacuum_settings() — hazır ALTER TABLE önerileri'],
+  ['s10','10. Cache Hit Oranı','cache_hit() — buffer cache doluluk oranı'],
+  ['s11','11. Yavaş Sorgular','slow_queries() — pg_stat_statements top N'],
+  ['s12','12. Uzun Çalışan Sorgular','long_running_queries() — şu an çalışan uzun sorgular'],
+  ['s13','13. Lock Bekleme Zinciri','lock_waits() — blocking/waiting session zinciri'],
+  ['s14','14. Tablo Büyüme Tahmini','table_growth_forecast() — 30/90/180/365 gün tahmini'],
+  ['s15','15. Partition Adayları','partition_candidates() — RANGE/HASH DDL önerisi'],
+  ['s16','16. Index Önerileri','index_recommendations() — CREATE INDEX CONCURRENTLY DDL'],
+  ['s17','17. Idle Transaction','idle_in_transaction() — açık kalmış transaction tespiti'],
+  ['s18','18. Vacuum Gereksinimi','vacuum_needs() — autovacuum eşiğine yaklaşan tablolar'],
+  ['s19','19. Replication Slotları','replication_slots() — takılı slot / WAL birikim riski'],
+  ['s20','20. Konfigurasyon Danışmanı','config_advisor() — RAM bazlı parametre önerileri'],
+  ['s21','21. Korelasyon Kontrolü','correlation_check() — B-tree verimsizliği / BRIN önerisi'],
+  ['s22','22. Sequence Sağlığı','sequence_health() — integer taşma riski'],
+  ['s23','23. FK Index Eksiklikleri','fk_without_index() — hazır CREATE INDEX DDL'],
+  ['s24','24. Bağlantı İstatistikleri','connection_stats() — aktif/idle/max_connections doluluk'],
+  ['s25','25. Temp File İstatistikleri','temp_file_stats() — work_mem spill analizi'],
+  ['s26','26. Vacuum İlerlemesi','vacuum_progress() — aktif VACUUM/AUTOVACUUM takibi'],
+  ['s27','27. Tablespace Kullanımı','tablespace_usage() — disk alanı ve nesne sayıları'],
+  ['s28','28. TOAST Analizi','toast_analysis() — TEXT/JSONB/BYTEA şişme tespiti'],
+  ['s29','29. Deadlock İstatistikleri','deadlock_stats() — geçmiş deadlock sayısı'],
+  ['s30','30. Buffer Cache Doluluk','buffercache_top() — cache içindeki en büyük nesneler'],
+  ['s31','31. Wait Event Özeti','wait_event_summary() — Lock/IO/CPU darboğaz dağılımı'],
+  ['s32','32. Index Bloat Tahmini','index_bloat_estimate() — REINDEX CONCURRENTLY adayları'],
+  ['s33','33. Yetki Denetimi','table_privileges_audit() — PUBLIC erişim / superuser rolleri'],
+  ['s34','34. Tablo Erişim Metodları','table_access_methods() — heap/columnar access method analizi']
+];
+
+// Her tabloyu section kartına sar
+var tables = document.querySelectorAll('.content > table, .content > p');
+var idx = 0;
+tables.forEach(function(el){
+  if(el.tagName === 'TABLE' && idx < sections.length){
+    var s = sections[idx];
+    var wrapper = document.createElement('div');
+    wrapper.className = 'section';
+    wrapper.id = s[0];
+    wrapper.innerHTML =
+      '<div class="section-head">' +
+        '<h2>' + s[1] + '</h2>' +
+        '<a class="back" href="#toc">↑ İçindekiler</a>' +
+      '</div>' +
+      '<div class="section-desc">' + s[2] + '</div>' +
+      '<div class="section-body"></div>';
+    el.parentNode.insertBefore(wrapper, el);
+    wrapper.querySelector('.section-body').appendChild(el);
+    idx++;
+  }
+});
+</script>
 </body>
 </html>
 HTML
