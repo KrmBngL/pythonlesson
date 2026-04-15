@@ -121,14 +121,14 @@ run_report() {
     # Her fonksiyonu ayrı ayrı çalıştır → temiz HTML tablo döner
     psql_html() {
         "$PSQL" -U "$PG_USER" -d "$db" --html -c "$1" 2>/dev/null \
-            | sed -n '/<table\b/,/<\/table>/p'
+            | sed -n '/<table\b/,/<\/table>/p' || true
     }
 
     # Bölüm kartı yaz
     write_section() {
         local sid="$1" title="$2" desc="$3" query="$4"
         local tbl
-        tbl=$(psql_html "$query")
+        tbl=$(psql_html "$query") || true
         {
             echo "<div class='section' id='${sid}'>"
             echo "<div class='section-head'><h2>${title}</h2><a class='back' href='#toc'>↑ İçindekiler</a></div>"
@@ -140,7 +140,7 @@ run_report() {
                 echo "<p class='no-data'>Sonuç bulunamadı — bu kontrol için sorun tespit edilmedi.</p>"
             fi
             echo "</div></div>"
-        } >> "$html_file"
+        } >> "$html_file" || true
     }
 
     # DB bilgilerini topla
