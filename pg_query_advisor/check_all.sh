@@ -118,13 +118,30 @@ run_report() {
     local html_file="${OUTPUT_DIR}/${db}_${TIMESTAMP}.html"
     local latest_link="${OUTPUT_DIR}/${db}_latest.html"
 
-    # psql HTML çıktısını bir geçici dosyaya al
-    local tmp_body
-    tmp_body=$(mktemp /tmp/pg_report_XXXXX.html)
+    # Her fonksiyonu ayrı ayrı çalıştır → temiz HTML tablo döner
+    psql_html() {
+        "$PSQL" -U "$PG_USER" -d "$db" --html -c "$1" 2>/dev/null \
+            | sed -n '/<table\b/,/<\/table>/p'
+    }
 
-    "$PSQL" -U "$PG_USER" -d "$db" \
-        --html \
-        -f "$CHECK_SQL" > "$tmp_body" 2>&1 || true
+    # Bölüm kartı yaz
+    write_section() {
+        local sid="$1" title="$2" desc="$3" query="$4"
+        local tbl
+        tbl=$(psql_html "$query")
+        {
+            echo "<div class='section' id='${sid}'>"
+            echo "<div class='section-head'><h2>${title}</h2><a class='back' href='#toc'>↑ İçindekiler</a></div>"
+            echo "<div class='section-desc'>${desc}</div>"
+            echo "<div class='section-body'>"
+            if [[ -n "$tbl" ]]; then
+                echo "$tbl"
+            else
+                echo "<p class='no-data'>Sonuç bulunamadı — bu kontrol için sorun tespit edilmedi.</p>"
+            fi
+            echo "</div></div>"
+        } >> "$html_file"
+    }
 
     # DB bilgilerini topla
     local pg_ver host_name db_size
@@ -299,7 +316,77 @@ tr.rok td{background:#f0fff4!important}
 <div class="content">
 HTML
 
-    cat "$tmp_body" >> "$html_file"
+    # Her bölümü ayrı ayrı çalıştır ve doğrudan yaz
+    write_section "s0"  "0. Genel Sağlık Özeti"        "health_summary — tüm kategorilerin özet skoru" \
+        "SELECT * FROM query_advisor.health_summary"
+    write_section "s1"  "1. Öncelikli Bulgular"         "report() — CRITICAL/WARNING/NOTICE sıralı master rapor" \
+        "SELECT * FROM query_advisor.report() ORDER BY priority, category"
+    write_section "s2"  "2. Tablo Sağlığı"              "table_health() — dead tuple oranı, last vacuum/analyze" \
+        "SELECT * FROM query_advisor.table_health() ORDER BY dead_ratio_pct DESC"
+    write_section "s3"  "3. Tablo Bloat Analizi"        "table_bloat() — boşa harcanan alan tahmini" \
+        "SELECT * FROM query_advisor.table_bloat() ORDER BY dead_ratio_pct DESC"
+    write_section "s4"  "4. Index Kullanımı"            "index_usage() — scan sayısı, ACTIVE/UNUSED sınıfı" \
+        "SELECT * FROM query_advisor.index_usage() ORDER BY index_scans ASC"
+    write_section "s5"  "5. Kullanılmayan Indexler"     "unused_indexes() — hazır DROP INDEX CONCURRENTLY" \
+        "SELECT * FROM query_advisor.unused_indexes() ORDER BY index_size_mb DESC"
+    write_section "s6"  "6. Tekrarlayan Indexler"       "duplicate_indexes() — aynı leading key paylaşan çiftler" \
+        "SELECT * FROM query_advisor.duplicate_indexes()"
+    write_section "s7"  "7. Eksik Indexler"             "missing_indexes() — seq scan >> index scan tablolar" \
+        "SELECT * FROM query_advisor.missing_indexes() ORDER BY seq_scan_count DESC"
+    write_section "s8"  "8. Index Sağlığı"              "index_health() — invalid index tespiti" \
+        "SELECT * FROM query_advisor.index_health() ORDER BY recommendation"
+    write_section "s9"  "9. Autovacuum Ayarları"        "autovacuum_settings() — hazır ALTER TABLE önerileri" \
+        "SELECT * FROM query_advisor.autovacuum_settings() ORDER BY estimated_rows DESC"
+    write_section "s10" "10. Cache Hit Oranı"           "cache_hit() — buffer cache doluluk oranı" \
+        "SELECT * FROM query_advisor.cache_hit() ORDER BY heap_hit_pct ASC"
+    write_section "s11" "11. Yavaş Sorgular"            "slow_queries() — pg_stat_statements top 20" \
+        "SELECT * FROM query_advisor.slow_queries(p_top_n => 20)"
+    write_section "s12" "12. Uzun Çalışan Sorgular"     "long_running_queries() — şu an çalışan uzun sorgular" \
+        "SELECT * FROM query_advisor.long_running_queries()"
+    write_section "s13" "13. Lock Bekleme Zinciri"      "lock_waits() — blocking/waiting session zinciri" \
+        "SELECT * FROM query_advisor.lock_waits()"
+    write_section "s14" "14. Tablo Büyüme Tahmini"      "table_growth_forecast() — 30/90/180/365 gün tahmini" \
+        "SELECT * FROM query_advisor.table_growth_forecast() ORDER BY growth_rate_pct DESC"
+    write_section "s15" "15. Partition Adayları"        "partition_candidates() — RANGE/HASH DDL önerisi" \
+        "SELECT schema_name,table_name,table_size,row_count,partition_strategy,partition_key,recommendation FROM query_advisor.partition_candidates()"
+    write_section "s16" "16. Index Önerileri"           "index_recommendations() — CREATE INDEX CONCURRENTLY DDL" \
+        "SELECT schema_table,seq_scan_count,live_rows,candidate_columns,suggested_ddl,recommendation FROM query_advisor.index_recommendations()"
+    write_section "s17" "17. Idle Transaction"          "idle_in_transaction() — açık kalmış transaction tespiti" \
+        "SELECT * FROM query_advisor.idle_in_transaction()"
+    write_section "s18" "18. Vacuum Gereksinimi"        "vacuum_needs() — autovacuum eşiğine yaklaşan tablolar" \
+        "SELECT * FROM query_advisor.vacuum_needs() ORDER BY dead_rows_pct_filled DESC"
+    write_section "s19" "19. Replication Slotları"      "replication_slots() — takılı slot / WAL birikim riski" \
+        "SELECT * FROM query_advisor.replication_slots()"
+    write_section "s20" "20. Konfigurasyon Danışmanı"   "config_advisor() — RAM bazlı parametre önerileri" \
+        "SELECT * FROM query_advisor.config_advisor()"
+    write_section "s21" "21. Korelasyon Kontrolü"       "correlation_check() — B-tree verimsizliği / BRIN önerisi" \
+        "SELECT schema_name,table_name,column_name,data_type,correlation,has_index,live_rows,finding,recommendation FROM query_advisor.correlation_check()"
+    write_section "s22" "22. Sequence Sağlığı"          "sequence_health() — integer taşma riski" \
+        "SELECT * FROM query_advisor.sequence_health() ORDER BY used_pct DESC"
+    write_section "s23" "23. FK Index Eksiklikleri"     "fk_without_index() — hazır CREATE INDEX DDL" \
+        "SELECT * FROM query_advisor.fk_without_index()"
+    write_section "s24" "24. Bağlantı İstatistikleri"   "connection_stats() — aktif/idle/max_connections doluluk" \
+        "SELECT * FROM query_advisor.connection_stats()"
+    write_section "s25" "25. Temp File İstatistikleri"  "temp_file_stats() — work_mem spill analizi" \
+        "SELECT * FROM query_advisor.temp_file_stats()"
+    write_section "s26" "26. Vacuum İlerlemesi"         "vacuum_progress() — aktif VACUUM/AUTOVACUUM takibi" \
+        "SELECT * FROM query_advisor.vacuum_progress()"
+    write_section "s27" "27. Tablespace Kullanımı"      "tablespace_usage() — disk alanı ve nesne sayıları" \
+        "SELECT * FROM query_advisor.tablespace_usage()"
+    write_section "s28" "28. TOAST Analizi"             "toast_analysis() — TEXT/JSONB/BYTEA şişme tespiti" \
+        "SELECT * FROM query_advisor.toast_analysis() ORDER BY toast_pct DESC"
+    write_section "s29" "29. Deadlock İstatistikleri"   "deadlock_stats() — geçmiş deadlock sayısı" \
+        "SELECT * FROM query_advisor.deadlock_stats()"
+    write_section "s30" "30. Buffer Cache Doluluk"      "buffercache_top() — cache içindeki en büyük nesneler" \
+        "SELECT * FROM query_advisor.buffercache_top()"
+    write_section "s31" "31. Wait Event Özeti"          "wait_event_summary() — Lock/IO/CPU darboğaz dağılımı" \
+        "SELECT * FROM query_advisor.wait_event_summary() ORDER BY session_count DESC"
+    write_section "s32" "32. Index Bloat Tahmini"       "index_bloat_estimate() — REINDEX CONCURRENTLY adayları" \
+        "SELECT * FROM query_advisor.index_bloat_estimate() ORDER BY bloat_ratio_pct DESC"
+    write_section "s33" "33. Yetki Denetimi"            "table_privileges_audit() — PUBLIC erişim / superuser rolleri" \
+        "SELECT * FROM query_advisor.table_privileges_audit()"
+    write_section "s34" "34. Tablo Erişim Metodları"    "table_access_methods() — heap/columnar access method analizi" \
+        "SELECT * FROM query_advisor.table_access_methods()"
 
     cat >> "$html_file" <<HTML
 </div><!-- /content -->
@@ -309,92 +396,24 @@ HTML
 </div>
 
 <script>
-// Satır renklendirme — td içeriğine göre
 document.querySelectorAll('table tr').forEach(function(tr){
   var txt = tr.textContent.toUpperCase();
-  if(txt.includes('CRITICAL') || txt.includes('KRITIK'))  { tr.className='rc'; }
-  else if(txt.includes('WARNING') || txt.includes('UYARI')){ tr.className='rw'; }
-  else if(/\bNOTICE\b/.test(txt))                          { tr.className='rn'; }
-  else if(/\bOK\b/.test(txt))                              { tr.className='rok'; }
+  if(txt.includes('CRITICAL')||txt.includes('KRITIK'))   tr.className='rc';
+  else if(txt.includes('WARNING')||txt.includes('UYARI')) tr.className='rw';
+  else if(/\bNOTICE\b/.test(txt))                         tr.className='rn';
+  else if(/\| *OK *(\||$)/.test(tr.textContent))          tr.className='rok';
 });
-
-// Hücre içi badge renklendirme
 document.querySelectorAll('td').forEach(function(td){
   td.innerHTML = td.innerHTML
-    .replace(/\bCRITICAL\b/g, '<span class="bc">CRITICAL</span>')
-    .replace(/\bKRITIK\b/g,   '<span class="bc">KRİTİK</span>')
-    .replace(/\bWARNING\b/g,  '<span class="bw">WARNING</span>')
-    .replace(/\bUYARI\b/g,    '<span class="bw">UYARI</span>')
-    .replace(/\bNOTICE\b/g,   '<span class="bn">NOTICE</span>')
-    .replace(/(?<![A-Z])\bOK\b(?![A-Z])/g, '<span class="bo">OK</span>');
-});
-
-// Section wrapper — her psql çıktı bloğunu kart içine al
-var sections = [
-  ['s0','0. Genel Sağlık Özeti','health_summary — tüm kategorilerin özet skoru'],
-  ['s1','1. Öncelikli Bulgular','report() — CRITICAL/WARNING/NOTICE sıralı master rapor'],
-  ['s2','2. Tablo Sağlığı','table_health() — dead tuple oranı, last vacuum/analyze'],
-  ['s3','3. Tablo Bloat Analizi','table_bloat() — boşa harcanan alan tahmini'],
-  ['s4','4. Index Kullanımı','index_usage() — scan sayısı, ACTIVE/UNUSED sınıfı'],
-  ['s5','5. Kullanılmayan Indexler','unused_indexes() — hazır DROP INDEX CONCURRENTLY'],
-  ['s6','6. Tekrarlayan Indexler','duplicate_indexes() — aynı leading key paylaşan çiftler'],
-  ['s7','7. Eksik Indexler','missing_indexes() — seq scan >> index scan tablolar'],
-  ['s8','8. Index Sağlığı','index_health() — invalid index tespiti'],
-  ['s9','9. Autovacuum Ayarları','autovacuum_settings() — hazır ALTER TABLE önerileri'],
-  ['s10','10. Cache Hit Oranı','cache_hit() — buffer cache doluluk oranı'],
-  ['s11','11. Yavaş Sorgular','slow_queries() — pg_stat_statements top N'],
-  ['s12','12. Uzun Çalışan Sorgular','long_running_queries() — şu an çalışan uzun sorgular'],
-  ['s13','13. Lock Bekleme Zinciri','lock_waits() — blocking/waiting session zinciri'],
-  ['s14','14. Tablo Büyüme Tahmini','table_growth_forecast() — 30/90/180/365 gün tahmini'],
-  ['s15','15. Partition Adayları','partition_candidates() — RANGE/HASH DDL önerisi'],
-  ['s16','16. Index Önerileri','index_recommendations() — CREATE INDEX CONCURRENTLY DDL'],
-  ['s17','17. Idle Transaction','idle_in_transaction() — açık kalmış transaction tespiti'],
-  ['s18','18. Vacuum Gereksinimi','vacuum_needs() — autovacuum eşiğine yaklaşan tablolar'],
-  ['s19','19. Replication Slotları','replication_slots() — takılı slot / WAL birikim riski'],
-  ['s20','20. Konfigurasyon Danışmanı','config_advisor() — RAM bazlı parametre önerileri'],
-  ['s21','21. Korelasyon Kontrolü','correlation_check() — B-tree verimsizliği / BRIN önerisi'],
-  ['s22','22. Sequence Sağlığı','sequence_health() — integer taşma riski'],
-  ['s23','23. FK Index Eksiklikleri','fk_without_index() — hazır CREATE INDEX DDL'],
-  ['s24','24. Bağlantı İstatistikleri','connection_stats() — aktif/idle/max_connections doluluk'],
-  ['s25','25. Temp File İstatistikleri','temp_file_stats() — work_mem spill analizi'],
-  ['s26','26. Vacuum İlerlemesi','vacuum_progress() — aktif VACUUM/AUTOVACUUM takibi'],
-  ['s27','27. Tablespace Kullanımı','tablespace_usage() — disk alanı ve nesne sayıları'],
-  ['s28','28. TOAST Analizi','toast_analysis() — TEXT/JSONB/BYTEA şişme tespiti'],
-  ['s29','29. Deadlock İstatistikleri','deadlock_stats() — geçmiş deadlock sayısı'],
-  ['s30','30. Buffer Cache Doluluk','buffercache_top() — cache içindeki en büyük nesneler'],
-  ['s31','31. Wait Event Özeti','wait_event_summary() — Lock/IO/CPU darboğaz dağılımı'],
-  ['s32','32. Index Bloat Tahmini','index_bloat_estimate() — REINDEX CONCURRENTLY adayları'],
-  ['s33','33. Yetki Denetimi','table_privileges_audit() — PUBLIC erişim / superuser rolleri'],
-  ['s34','34. Tablo Erişim Metodları','table_access_methods() — heap/columnar access method analizi']
-];
-
-// Her tabloyu section kartına sar
-var tables = document.querySelectorAll('.content > table, .content > p');
-var idx = 0;
-tables.forEach(function(el){
-  if(el.tagName === 'TABLE' && idx < sections.length){
-    var s = sections[idx];
-    var wrapper = document.createElement('div');
-    wrapper.className = 'section';
-    wrapper.id = s[0];
-    wrapper.innerHTML =
-      '<div class="section-head">' +
-        '<h2>' + s[1] + '</h2>' +
-        '<a class="back" href="#toc">↑ İçindekiler</a>' +
-      '</div>' +
-      '<div class="section-desc">' + s[2] + '</div>' +
-      '<div class="section-body"></div>';
-    el.parentNode.insertBefore(wrapper, el);
-    wrapper.querySelector('.section-body').appendChild(el);
-    idx++;
-  }
+    .replace(/\bCRITICAL\b/g,'<span class="bc">CRITICAL</span>')
+    .replace(/\bWARNING\b/g, '<span class="bw">WARNING</span>')
+    .replace(/\bNOTICE\b/g,  '<span class="bn">NOTICE</span>')
+    .replace(/(?<![A-Z])\bOK\b(?![A-Z])/g,'<span class="bo">OK</span>');
 });
 </script>
 </body>
 </html>
 HTML
-
-    rm -f "$tmp_body"
 
     # Sembolik en son linki güncelle
     ln -sf "$(basename "$html_file")" "$latest_link"
