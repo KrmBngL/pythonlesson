@@ -119,11 +119,15 @@ a:hover{text-decoration:underline}
 .db-info-cell{padding:6px 20px;border-right:1px solid #004d99;font-size:.82em}
 .db-info-cell strong{display:block;font-size:.78em;text-transform:uppercase;opacity:.7;margin-bottom:1px}
 
-/* DB Tab Bar */
-.tab-bar{position:sticky;top:0;z-index:100;background:#002244;display:flex;flex-wrap:wrap;gap:2px;padding:6px 28px;box-shadow:0 2px 6px rgba(0,0,0,.3)}
-.tab-btn{background:#003f7a;color:#aad4ff;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;font-size:.82em;font-weight:600;transition:background .15s}
-.tab-btn:hover{background:#0059b3}
-.tab-btn.active{background:#f0a500;color:#000}
+/* DB Selector Bar */
+.db-bar{position:sticky;top:0;z-index:100;background:#002244;display:flex;align-items:center;gap:12px;padding:8px 28px;box-shadow:0 2px 6px rgba(0,0,0,.3)}
+.db-bar label{color:#aad4ff;font-size:.82em;font-weight:600;white-space:nowrap}
+.db-select{background:#003f7a;color:#aad4ff;border:1px solid #0059b3;padding:6px 12px;border-radius:4px;font-size:.85em;font-weight:600;cursor:pointer;min-width:220px;max-width:400px}
+.db-select:focus{outline:none;border-color:#f0a500}
+.db-badge{display:inline-block;padding:2px 10px;border-radius:10px;font-size:.75em;font-weight:700;margin-left:4px}
+.db-nav{display:flex;gap:6px;margin-left:auto}
+.db-nav button{background:#003f7a;color:#aad4ff;border:1px solid #0059b3;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:.8em}
+.db-nav button:hover{background:#0059b3}
 
 /* Cluster Scorecard */
 .cluster-score{max-width:1300px;margin:14px auto 0;padding:0 28px;display:flex;gap:10px;flex-wrap:wrap}
@@ -186,7 +190,7 @@ tr.rok td{background:#f0fff4!important}
 .overview-table tr:hover td{background:#e8f0fb;cursor:pointer}
 
 .footer{text-align:center;padding:16px;color:#888;font-size:.76em;border-top:1px solid #ddd;margin-top:8px}
-@media print{.tab-bar{display:none}.db-panel{display:block!important}}
+@media print{.db-bar{display:none}.db-panel{display:block!important}}
 </style>
 </head>
 <body>
@@ -262,16 +266,32 @@ cat >> "$HTML_FILE" <<HTML
   <div class="cs-box cs-ok">      <span class="num">${#DB_LIST[@]}</span><span class="lbl">Toplam DB</span></div>
 </div>
 
-<div class="tab-bar">
-  <button class="tab-btn active" onclick="showDB('__overview__',this)">Cluster Özeti</button>
+<div class="db-bar">
+  <label for="db-selector">Veritabanı Seç:</label>
+  <select class="db-select" id="db-selector" onchange="showDB(this.value)">
+    <option value="__overview__">&#9776; Cluster Özeti</option>
 HTML
 
 for db in "${DB_LIST[@]}"; do
     [[ -z "$db" ]] && continue
-    echo "  <button class='tab-btn' onclick=\"showDB('${db}',this)\">${db}</button>" >> "$HTML_FILE"
+    cr="${DB_CRIT[$db]:-0}"
+    wr="${DB_WARN[$db]:-0}"
+    if [[ "${DB_HAS_EXT[$db]:-no}" == "no" ]]; then
+        echo "    <option value='${db}' disabled>${db} — kurulu değil</option>" >> "$HTML_FILE"
+    else
+        label="${db}"
+        [[ "$cr" -gt 0 ]] && label="${label}  ●C:${cr}"
+        [[ "$wr" -gt 0 ]] && label="${label}  ●W:${wr}"
+        echo "    <option value='${db}'>${label}</option>" >> "$HTML_FILE"
+    fi
 done
 
 cat >> "$HTML_FILE" <<HTML
+  </select>
+  <div class="db-nav">
+    <button onclick="navDB(-1)">&#9664; Önceki</button>
+    <button onclick="navDB(1)">Sonraki &#9654;</button>
+  </div>
 </div>
 HTML
 
@@ -303,13 +323,13 @@ for db in "${DB_LIST[@]}"; do
         row_style="style='opacity:.55'"
         durum="Kurulu Değil"
     elif [[ "$cr" -gt 0 ]]; then
-        row_style="style='cursor:pointer' onclick=\"showDB('${db}',null)\""
+        row_style="style='cursor:pointer' onclick=\"showDB('${db}')\""
         durum="<span class='bc'>CRITICAL</span>"
     elif [[ "$wr" -gt 0 ]]; then
-        row_style="style='cursor:pointer' onclick=\"showDB('${db}',null)\""
+        row_style="style='cursor:pointer' onclick=\"showDB('${db}')\""
         durum="<span class='bw'>WARNING</span>"
     else
-        row_style="style='cursor:pointer' onclick=\"showDB('${db}',null)\""
+        row_style="style='cursor:pointer' onclick=\"showDB('${db}')\""
         durum="<span class='bo'>OK</span>"
     fi
     echo "      <tr ${row_style}><td>${db}</td><td>${ver}</td><td>${sz}</td><td>${cr}</td><td>${wr}</td><td>${durum}</td></tr>" >> "$HTML_FILE"
@@ -412,17 +432,25 @@ cat >> "$HTML_FILE" <<HTML
 </div>
 
 <script>
-function showDB(db, btn) {
+function showDB(db) {
     document.querySelectorAll('.db-panel').forEach(function(p){ p.classList.remove('active'); });
-    document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.remove('active'); });
     var panel = document.getElementById('panel-' + db);
     if (panel) panel.classList.add('active');
-    if (btn) { btn.classList.add('active'); }
-    else {
-        document.querySelectorAll('.tab-btn').forEach(function(b){
-            if (b.textContent.trim() === db) b.classList.add('active');
-        });
-    }
+    var sel = document.getElementById('db-selector');
+    if (sel) sel.value = db;
+    window.scrollTo(0, 0);
+}
+
+function navDB(dir) {
+    var sel = document.getElementById('db-selector');
+    if (!sel) return;
+    var opts = Array.from(sel.options).filter(function(o){ return !o.disabled; });
+    var cur = opts.findIndex(function(o){ return o.selected; });
+    var next = cur + dir;
+    if (next < 0) next = opts.length - 1;
+    if (next >= opts.length) next = 0;
+    opts[next].selected = true;
+    showDB(opts[next].value);
 }
 
 document.querySelectorAll('table tr').forEach(function(tr){
